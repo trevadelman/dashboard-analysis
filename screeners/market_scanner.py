@@ -2,7 +2,9 @@
 Market Scanner
 Batch scan of symbols using Tier 1 + Tier 2 of the SignalHierarchy.
 Streams results via SSE as each symbol completes.
-Rate-limited to stay under Alpaca's 200 req/min cap.
+
+Fetches bars in batches of BATCH_SIZE symbols per Alpaca request to stay
+well under the 200 req/min cap while dramatically reducing total scan time.
 """
 
 import json
@@ -44,7 +46,12 @@ SYMBOL_LISTS = {
     "all_universe":    None,   # resolved dynamically from cache at scan time
 }
 
-# Seconds between Alpaca bar requests — keeps us at ~170 req/min (under 200 limit)
+# Number of symbols to fetch in a single Alpaca bars request.
+# Alpaca accepts up to ~1000 symbols per request; 50 is a safe, fast batch size.
+_BATCH_SIZE = 50
+
+# Seconds between batch requests — keeps us well under Alpaca's 200 req/min cap.
+# At 50 symbols/batch and 0.36s/batch: ~8,300 symbols/min theoretical throughput.
 _REQUEST_INTERVAL = 0.36
 
 
@@ -52,6 +59,9 @@ class MarketScanner:
     """
     Scans a list of symbols against Tier 1 (regime) and Tier 2 (compression/RS/RVOL)
     of the SignalHierarchy using Alpaca daily bars.
+
+    Bar data is fetched in batches of _BATCH_SIZE symbols per API request,
+    reducing total API calls by ~50x compared to one-symbol-at-a-time fetching.
     """
 
     def __init__(self, data_client: StockHistoricalDataClient):
@@ -92,29 +102,37 @@ class MarketScanner:
         yield self._event({"type": "start", "total": total, "list": list_name, "timeframe": timeframe})
 
         # Fetch SPY once as the benchmark for relative strength
-        self._spy_data = self._fetch_bars("SPY", timeframe=timeframe)
+        spy_batch = self._fetch_bars_batch(["SPY"], timeframe=timeframe)
+        self._spy_data = spy_batch.get("SPY", pd.DataFrame())
         time.sleep(_REQUEST_INTERVAL)
 
-        for symbol in symbols:
-            result = self._scan_one(symbol, timeframe=timeframe)
-            scanned += 1
+        # Process symbols in batches
+        for batch_start in range(0, total, _BATCH_SIZE):
+            batch = symbols[batch_start : batch_start + _BATCH_SIZE]
 
-            if result is not None:
-                if result.get("signal") in ("BUY", "SELL"):
-                    signals += 1
-                yield self._event({"type": "result", **result})
-
-            yield self._event({"type": "progress", "scanned": scanned, "total": total})
+            # Fetch all bars in the batch with a single API call
+            bars_by_symbol = self._fetch_bars_batch(batch, timeframe=timeframe)
             time.sleep(_REQUEST_INTERVAL)
 
+            for symbol in batch:
+                bars = bars_by_symbol.get(symbol, pd.DataFrame())
+                result = self._scan_one_from_bars(symbol, bars, timeframe=timeframe)
+                scanned += 1
+
+                if result is not None:
+                    if result.get("signal") in ("BUY", "SELL"):
+                        signals += 1
+                    yield self._event({"type": "result", **result})
+
+                yield self._event({"type": "progress", "scanned": scanned, "total": total})
+
         elapsed = round(time.time() - start_ts, 1)
-        done_payload = {
+        yield self._event({
             "type":    "done",
             "scanned": scanned,
             "signals": signals,
             "elapsed": elapsed,
-        }
-        yield self._event(done_payload)
+        })
 
     def write_cache(self, results: list, list_name: str, timeframe: str) -> None:
         """
@@ -192,9 +210,11 @@ class MarketScanner:
 
         return list(SYMBOL_LISTS.get(list_name, []))
 
-    def _fetch_bars(self, symbol: str, timeframe: str = "long") -> pd.DataFrame:
-        """Fetch bars for a symbol from Alpaca (IEX feed — free tier compatible).
+    def _fetch_bars_batch(self, symbols: list, timeframe: str = "long") -> dict:
+        """
+        Fetch bars for a batch of symbols in a single Alpaca request.
 
+        Returns a dict mapping symbol → DataFrame (empty DataFrame if no data).
         Bar interval and lookback days are resolved from TIMEFRAME_CONFIG.
         """
         from datetime import timezone
@@ -209,35 +229,49 @@ class MarketScanner:
             "15m": TimeFrame(15, TimeFrameUnit.Minute),
         }.get(interval, TimeFrame.Day)
 
+        result = {sym: pd.DataFrame() for sym in symbols}
+
         try:
             end   = datetime.now(timezone.utc)
             start = end - timedelta(days=days)
             request = StockBarsRequest(
-                symbol_or_symbols=symbol,
+                symbol_or_symbols=symbols,
                 timeframe=tf_obj,
                 start=start,
                 end=end,
                 limit=10000,
                 feed=DataFeed.IEX,
             )
-            bars = self._data_client.get_stock_bars(request).df
-            if bars.empty:
-                return pd.DataFrame()
-            # alpaca-py returns a MultiIndex (symbol, timestamp) — drop the symbol level
-            if isinstance(bars.index, pd.MultiIndex):
-                bars = bars.droplevel(0)
-            bars.columns = [c.lower() for c in bars.columns]
-            return bars
-        except Exception as e:
-            logger.debug(f"Failed to fetch bars for {symbol}: {e}")
-            return pd.DataFrame()
+            bars_df = self._data_client.get_stock_bars(request).df
+            if bars_df.empty:
+                return result
 
-    def _scan_one(self, symbol: str, timeframe: str = "long") -> dict | None:
+            # alpaca-py returns a MultiIndex (symbol, timestamp) for multi-symbol requests
+            if isinstance(bars_df.index, pd.MultiIndex):
+                bars_df.columns = [c.lower() for c in bars_df.columns]
+                for sym in symbols:
+                    try:
+                        sym_bars = bars_df.xs(sym, level=0)
+                        if not sym_bars.empty:
+                            result[sym] = sym_bars
+                    except KeyError:
+                        pass  # symbol had no data in this batch
+            else:
+                # Single symbol — shouldn't happen in batch mode but handle gracefully
+                bars_df.columns = [c.lower() for c in bars_df.columns]
+                if symbols:
+                    result[symbols[0]] = bars_df
+
+        except Exception as e:
+            logger.debug(f"Batch fetch error for {len(symbols)} symbols: {e}")
+
+        return result
+
+    def _scan_one_from_bars(self, symbol: str, bars: pd.DataFrame, timeframe: str = "long") -> dict | None:
         """
-        Fetch bars, run Tier 1 + Tier 2, and return a result dict.
-        Returns None if data could not be fetched.
+        Run Tier 1 + Tier 2 on pre-fetched bars and return a result dict.
+        Returns None if bars are empty or too short.
         """
-        bars = self._fetch_bars(symbol, timeframe=timeframe)
         if bars.empty or len(bars) < 50:
             return None
 

@@ -189,9 +189,11 @@ def fetch_alpaca_universe(trading_client, min_price: float = 1.0) -> List[str]:
         symbols = sorted([
             a.symbol for a in assets
             if a.tradable
+            and a.fractionable          # proxy for institutional liquidity
+            and a.easy_to_borrow        # further narrows to ~2k well-established names
             and a.exchange in valid_exchanges
-            and '/' not in a.symbol   # exclude crypto-style pairs
-            and '.' not in a.symbol   # exclude BRK.B style (Alpaca uses BRK/B)
+            and '/' not in a.symbol    # exclude crypto-style pairs
+            and '.' not in a.symbol    # exclude BRK.B style (Alpaca uses BRK/B)
         ])
 
         logger.info(f"Alpaca returned {len(symbols)} tradeable US equity symbols")
