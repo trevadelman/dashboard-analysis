@@ -49,6 +49,7 @@ const STATUS_COLORS = {
 async function updateTrades() {
     const trades    = await (await fetch('/api/trades?limit=20')).json();
     const container = document.getElementById('trades-list');
+    if (!container) return;
     if (trades && !trades.error && trades.length > 0) {
         container.innerHTML = trades.map(t => {
             const time        = t.timestamp ? new Date(t.timestamp).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '—';
