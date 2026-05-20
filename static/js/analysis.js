@@ -27,46 +27,48 @@ function buildTierCard(tier) {
 }
 
 function buildSignalCard(sig, symbol) {
-    const badgeClass  = sig.side === 'buy' ? 'badge-success' : sig.side === 'sell' ? 'badge-error' : 'badge-ghost';
-    const riskAmt     = Math.abs(sig.entry_price - sig.stop_price).toFixed(2);
-    const rewardAmt   = Math.abs(sig.target_price - sig.entry_price).toFixed(2);
-    const rr          = riskAmt > 0 ? (rewardAmt / riskAmt).toFixed(1) : '—';
+    const badgeClass = sig.side === 'buy' ? 'badge-success' : sig.side === 'sell' ? 'badge-error' : 'badge-ghost';
+    const riskAmt    = Math.abs(sig.entry_price - sig.stop_price).toFixed(2);
+    const rewardAmt  = Math.abs(sig.target_price - sig.entry_price).toFixed(2);
+    const rr         = riskAmt > 0 ? (rewardAmt / riskAmt).toFixed(1) : '—';
+    const entryLabel = sig.entry_type === 'limit' ? 'Limit Entry' : 'Market Entry';
+    const sigJson    = JSON.stringify(sig).replace(/"/g, '&quot;');
     return `
         <div class="card bg-base-100 border border-base-300 mt-4 tier-card" style="animation: slideIn 0.25s ease-out;">
             <div class="card-body p-4">
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                         <h3 class="text-xs font-semibold text-base-content/60 uppercase mb-2">Signal</h3>
                         <div class="flex items-center gap-2 mb-2">
                             <span class="badge ${badgeClass} badge-lg">${sig.side.toUpperCase()}</span>
                             <span class="text-xl font-bold">${symbol}</span>
                         </div>
+                        <div class="badge badge-outline badge-sm mb-2">${entryLabel}</div>
                         <p class="text-xs text-base-content/60">${sig.reason}</p>
                     </div>
                     <div>
                         <h3 class="text-xs font-semibold text-base-content/60 uppercase mb-2">Trade Levels</h3>
                         <div class="text-xs space-y-1">
-                            <div>Entry: <strong>$${sig.entry_price}</strong></div>
+                            <div>${entryLabel}: <strong>$${sig.entry_price}</strong></div>
                             <div>Stop: <strong class="text-error">$${sig.stop_price}</strong> <span class="text-base-content/60">(-$${riskAmt})</span></div>
                             <div>Target: <strong class="text-success">$${sig.target_price}</strong> <span class="text-base-content/60">(+$${rewardAmt})</span></div>
                             <div class="text-base-content/60">R:R = ${rr}:1</div>
                         </div>
+                        ${sig.ai_confidence ? `
+                        <div class="mt-3">
+                            <h3 class="text-xs font-semibold text-base-content/60 uppercase mb-1">AI Confidence</h3>
+                            <progress class="progress progress-primary w-full" value="${sig.ai_confidence}" max="100"></progress>
+                            <p class="text-xs text-base-content/60 mt-1">${sig.ai_reasoning || ''}</p>
+                        </div>` : ''}
                     </div>
-                    <div>
-                        <h3 class="text-xs font-semibold text-base-content/60 uppercase mb-2">AI Confirmation</h3>
-                        <progress class="progress progress-primary w-full mb-2" value="${sig.ai_confidence || 0}" max="100"></progress>
-                        <p class="text-xs text-base-content/60">${sig.ai_reasoning || 'No AI reasoning provided'}</p>
-                    </div>
-                    <div>
-                        <label class="label"><span class="label-text text-xs">Order Duration</span></label>
-                        <select id="tif-select-${sig.symbol}" class="select select-bordered select-sm w-full mb-2">
-                            <option value="day">Day</option>
-                            <option value="gtc" selected>GTC</option>
-                        </select>
-                        <button class="btn btn-success btn-sm w-full" onclick="executeTrade(${JSON.stringify(sig).replace(/"/g, '&quot;')}, document.getElementById('tif-select-${sig.symbol}').value)">
-                            <i class="bi bi-lightning-fill"></i> Execute Trade
+                    <div class="flex flex-col justify-end">
+                        <button class="btn btn-success btn-sm w-full gap-2"
+                                onclick="openTradeModal(${sigJson})">
+                            <i class="bi bi-lightning-fill"></i> Review &amp; Execute
                         </button>
-                        <div class="text-xs text-base-content/60 text-center mt-1">Bracket order</div>
+                        <div class="text-xs text-base-content/60 text-center mt-1">
+                            Limit bracket · 2R target · Phase 2: runner trail
+                        </div>
                     </div>
                 </div>
             </div>
@@ -248,6 +250,97 @@ async function runAnalysis() {
             overallBadge.textContent = '❌ Stream failed';
         }
     };
+}
+
+// ===== TRADE MODAL =====
+
+let _pendingTrade = null;
+
+function openTradeModal(sig) {
+    _pendingTrade = sig;
+
+    const riskAmt   = Math.abs(sig.entry_price - sig.stop_price);
+    const rewardAmt = Math.abs(sig.target_price - sig.entry_price);
+    const rr        = riskAmt > 0 ? (rewardAmt / riskAmt).toFixed(1) : '2.0';
+
+    // Header
+    const badge = document.getElementById('tm-badge');
+    badge.textContent  = sig.side.toUpperCase();
+    badge.className    = `badge badge-lg ${sig.side === 'buy' ? 'badge-success' : 'badge-error'}`;
+    document.getElementById('tm-symbol').textContent     = sig.symbol;
+    document.getElementById('tm-entry-type').textContent = sig.entry_type === 'limit' ? 'Limit Entry' : 'Market Entry';
+
+    // Levels
+    document.getElementById('tm-entry').textContent    = `$${sig.entry_price}`;
+    document.getElementById('tm-stop').textContent     = `$${sig.stop_price}`;
+    document.getElementById('tm-target').textContent   = `$${sig.target_price}`;
+    document.getElementById('tm-risk-amt').textContent = `-$${riskAmt.toFixed(2)}`;
+    document.getElementById('tm-reward-amt').textContent = `+$${rewardAmt.toFixed(2)}`;
+    document.getElementById('tm-rr').textContent       = `${rr}:1`;
+
+    // Position sizing — estimate from account equity if available
+    const equityEl = document.getElementById('equity');
+    const equityStr = equityEl ? equityEl.textContent.replace(/[$,]/g, '') : '0';
+    const equity    = parseFloat(equityStr) || 0;
+    const riskPct   = 0.01; // 1% default — matches bot default
+    if (equity > 0 && riskAmt > 0) {
+        const dollarRisk = equity * riskPct;
+        const qty        = Math.max(1, Math.floor(dollarRisk / riskAmt));
+        const totalRisk  = qty * riskAmt;
+        document.getElementById('tm-qty').textContent        = `${qty} shares`;
+        document.getElementById('tm-dollar-risk').textContent = `~$${totalRisk.toFixed(0)} at risk (1% equity)`;
+    } else {
+        document.getElementById('tm-qty').textContent        = '—';
+        document.getElementById('tm-dollar-risk').textContent = 'Connect account for sizing';
+    }
+
+    // Reason
+    document.getElementById('tm-reason').textContent = sig.reason || '';
+
+    // Reset confirm button
+    const btn = document.getElementById('tm-confirm-btn');
+    btn.disabled    = false;
+    btn.textContent = '';
+    btn.innerHTML   = '<i class="bi bi-lightning-fill"></i> Place Order';
+
+    document.getElementById('trade-modal').showModal();
+}
+
+async function confirmTrade() {
+    if (!_pendingTrade) return;
+
+    const btn = document.getElementById('tm-confirm-btn');
+    btn.disabled  = true;
+    btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span> Placing…';
+
+    const tif = document.getElementById('tm-tif').value;
+
+    try {
+        const res  = await fetch('/api/execute_trade', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ ..._pendingTrade, time_in_force: tif }),
+        });
+        const data = await res.json();
+
+        if (data.error) {
+            btn.disabled  = false;
+            btn.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> Error — retry';
+            alert(`Order failed: ${data.error}`);
+            return;
+        }
+
+        document.getElementById('trade-modal').close();
+        _pendingTrade = null;
+
+        // Refresh positions/trades after a short delay
+        setTimeout(() => { updatePositions(); updateTrades(); }, 1500);
+
+    } catch (err) {
+        btn.disabled  = false;
+        btn.innerHTML = '<i class="bi bi-exclamation-triangle-fill"></i> Error — retry';
+        alert(`Network error: ${err.message}`);
+    }
 }
 
 async function refreshAll() {

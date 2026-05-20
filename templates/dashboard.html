@@ -158,6 +158,80 @@
 {% endblock %}
 
 {% block scripts %}
+<!-- Trade execution modal -->
+<dialog id="trade-modal" class="modal">
+    <div class="modal-box max-w-lg">
+        <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+            <i class="bi bi-lightning-fill text-success"></i>
+            Review Trade
+        </h3>
+
+        <!-- Symbol + side header -->
+        <div class="flex items-center gap-3 mb-4">
+            <span id="tm-badge" class="badge badge-success badge-lg">BUY</span>
+            <span id="tm-symbol" class="text-2xl font-bold"></span>
+            <span id="tm-entry-type" class="badge badge-outline badge-sm">Limit Entry</span>
+        </div>
+
+        <!-- Trade levels (read-only) -->
+        <div class="grid grid-cols-3 gap-3 mb-4">
+            <div class="bg-base-200 rounded-lg p-3 text-center">
+                <div class="text-xs text-base-content/60 mb-1">Entry (Limit)</div>
+                <div id="tm-entry" class="text-lg font-bold"></div>
+            </div>
+            <div class="bg-base-200 rounded-lg p-3 text-center">
+                <div class="text-xs text-error mb-1">Stop Loss</div>
+                <div id="tm-stop" class="text-lg font-bold text-error"></div>
+                <div id="tm-risk-amt" class="text-xs text-base-content/60"></div>
+            </div>
+            <div class="bg-base-200 rounded-lg p-3 text-center">
+                <div class="text-xs text-success mb-1">Target (2R)</div>
+                <div id="tm-target" class="text-lg font-bold text-success"></div>
+                <div id="tm-reward-amt" class="text-xs text-base-content/60"></div>
+            </div>
+        </div>
+
+        <!-- R:R + position sizing -->
+        <div class="grid grid-cols-2 gap-3 mb-4">
+            <div class="bg-base-200 rounded-lg p-3">
+                <div class="text-xs text-base-content/60 mb-1">R:R Ratio</div>
+                <div id="tm-rr" class="text-lg font-bold">2.0:1</div>
+            </div>
+            <div class="bg-base-200 rounded-lg p-3">
+                <div class="text-xs text-base-content/60 mb-1">Est. Position Size</div>
+                <div id="tm-qty" class="text-lg font-bold">—</div>
+                <div id="tm-dollar-risk" class="text-xs text-base-content/60"></div>
+            </div>
+        </div>
+
+        <!-- Order duration -->
+        <div class="form-control mb-4">
+            <label class="label py-1"><span class="label-text text-sm font-medium">Order Duration</span></label>
+            <select id="tm-tif" class="select select-bordered select-sm w-full">
+                <option value="gtc" selected>GTC — Good Till Cancelled</option>
+                <option value="day">Day — Expires at market close</option>
+            </select>
+        </div>
+
+        <!-- Phase 2 note -->
+        <div class="alert alert-info py-2 text-xs mb-4">
+            <i class="bi bi-info-circle-fill"></i>
+            <span>Phase 2 (coming): partial exit at 1.5R + runner trail on remainder</span>
+        </div>
+
+        <!-- Reason -->
+        <p id="tm-reason" class="text-xs text-base-content/60 mb-4"></p>
+
+        <div class="modal-action">
+            <button class="btn btn-ghost" onclick="document.getElementById('trade-modal').close()">Cancel</button>
+            <button id="tm-confirm-btn" class="btn btn-success gap-2" onclick="confirmTrade()">
+                <i class="bi bi-lightning-fill"></i> Place Order
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
 <script src="/static/js/chart.js"></script>
 <script src="/static/js/account.js"></script>
 <script src="/static/js/config.js"></script>

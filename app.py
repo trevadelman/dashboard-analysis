@@ -385,32 +385,50 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
 
             time_in_force = data.get("time_in_force", "gtc")
 
-            from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest
+            from alpaca.trading.requests import (
+                LimitOrderRequest, MarketOrderRequest,
+                TakeProfitRequest, StopLossRequest,
+            )
             from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
 
             order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
-            tif = TimeInForce.GTC if time_in_force == "gtc" else TimeInForce.DAY
-            req = MarketOrderRequest(
-                symbol=symbol,
-                qty=quantity,
-                side=order_side,
-                time_in_force=tif,
-                order_class=OrderClass.BRACKET,
-                take_profit=TakeProfitRequest(limit_price=round(target_price, 2)),
-                stop_loss=StopLossRequest(stop_price=round(stop_price, 2)),
-            )
+            tif        = TimeInForce.GTC if time_in_force == "gtc" else TimeInForce.DAY
+            entry_type = data.get("entry_type", "limit")
+
+            if entry_type == "limit":
+                req = LimitOrderRequest(
+                    symbol=symbol,
+                    qty=quantity,
+                    side=order_side,
+                    time_in_force=tif,
+                    limit_price=round(entry_price, 2),
+                    order_class=OrderClass.BRACKET,
+                    take_profit=TakeProfitRequest(limit_price=round(target_price, 2)),
+                    stop_loss=StopLossRequest(stop_price=round(stop_price, 2)),
+                )
+            else:
+                req = MarketOrderRequest(
+                    symbol=symbol,
+                    qty=quantity,
+                    side=order_side,
+                    time_in_force=tif,
+                    order_class=OrderClass.BRACKET,
+                    take_profit=TakeProfitRequest(limit_price=round(target_price, 2)),
+                    stop_loss=StopLossRequest(stop_price=round(stop_price, 2)),
+                )
             order = bot.trading_client.submit_order(req)
 
             trade_info = {
-                "timestamp": datetime.now().isoformat(),
-                "symbol": symbol,
-                "side": side,
-                "quantity": quantity,
-                "entry_price": entry_price,
-                "stop_price": stop_price,
+                "timestamp":  datetime.now().isoformat(),
+                "symbol":     symbol,
+                "side":       side,
+                "entry_type": entry_type,
+                "quantity":   quantity,
+                "entry_price":  entry_price,
+                "stop_price":   stop_price,
                 "target_price": target_price,
                 "order_id": str(order.id),
-                "status": order.status.value,
+                "status":   order.status.value,
             }
             bot._log_trade(trade_info)
             logger.info(

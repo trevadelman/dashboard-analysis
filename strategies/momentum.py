@@ -333,32 +333,40 @@ class SignalHierarchy:
             return None, details
 
         # ── All conditions met — build signal ─────────────────────────────────
+        # Entry: limit at the breakout level + small ATR buffer (not current price).
+        # This avoids chasing and gets a structurally meaningful fill price.
+        # Stop: structural invalidation (compression low/high ± 0.25×ATR).
+        # Target: 2R from the limit entry — clean, avoids 1.5R noise zone.
         if regime == 'BULLISH':
-            # Tighter structural stop: use max() to pick the closer (higher) stop
+            limit_entry     = round(breakout_level + atr * 0.10, 2)
             compression_low = data['low'].tail(5).min()
-            structure_stop  = compression_low - atr * 0.25
-            atr_stop        = price - atr * self.params['atr_multiplier']
-            stop_price      = max(structure_stop, atr_stop)   # tighter = higher for buys
-            target_price    = price + abs(price - stop_price) * self.params['min_rr_ratio'] * 1.5
+            stop_price      = round(compression_low - atr * 0.25, 2)
+            risk            = abs(limit_entry - stop_price)
+            target_price    = round(limit_entry + risk * 2.0, 2)
             side            = 'buy'
             reason          = (f"Compression breakout above {breakout_level:.2f}: "
                                f"EMA aligned + BB/ATR compressed + RS positive + RVOL {rvol:.1f}x")
         else:
+            limit_entry      = round(breakdown_level - atr * 0.10, 2)
             compression_high = data['high'].tail(5).max()
-            structure_stop   = compression_high + atr * 0.25
-            atr_stop         = price + atr * self.params['atr_multiplier']
-            stop_price       = min(structure_stop, atr_stop)  # tighter = lower for sells
-            target_price     = price - abs(stop_price - price) * self.params['min_rr_ratio'] * 1.5
+            stop_price       = round(compression_high + atr * 0.25, 2)
+            risk             = abs(stop_price - limit_entry)
+            target_price     = round(limit_entry - risk * 2.0, 2)
             side             = 'sell'
             reason           = (f"Compression breakdown below {breakdown_level:.2f}: "
                                 f"EMA aligned + BB/ATR compressed + RS negative + RVOL {rvol:.1f}x")
 
+        rr = round(risk * 2.0 / risk, 1) if risk > 0 else 0  # always 2.0 by construction
         details.append(f"✅ All conditions met — {side.upper()} signal generated")
+        details.append(f"Limit entry: ${limit_entry} | Stop: ${stop_price} | Target: ${target_price} | R:R 2:1")
         return {
-            'symbol': symbol, 'side': side,
-            'entry_price':  round(price, 2),
-            'stop_price':   round(stop_price, 2),
-            'target_price': round(target_price, 2),
+            'symbol':       symbol,
+            'side':         side,
+            'entry_type':   'limit',
+            'entry_price':  limit_entry,
+            'stop_price':   stop_price,
+            'target_price': target_price,
+            'rr':           2.0,
             'confidence':   'deterministic',
             'reason':       reason,
             'regime':       regime,
