@@ -187,17 +187,17 @@ class MarketScanner:
         latest = bars.iloc[-1]
         price  = round(float(latest.get("close", 0)), 2)
 
-        # Relative strength vs SPY (last bar's rs_vs_spy column if available)
+        # Relative strength vs SPY (last bar's rs_vs_spy_20 column)
         rs_vs_spy = None
-        if "rs_vs_spy" in bars.columns:
-            val = latest.get("rs_vs_spy")
+        if "rs_vs_spy_20" in bars.columns:
+            val = latest.get("rs_vs_spy_20")
             if val is not None and not (isinstance(val, float) and pd.isna(val)):
                 rs_vs_spy = round(float(val), 2)
 
         # RVOL
         rvol = None
-        if "rvol" in bars.columns:
-            val = latest.get("rvol")
+        if "rvol_20" in bars.columns:
+            val = latest.get("rvol_20")
             if val is not None and not (isinstance(val, float) and pd.isna(val)):
                 rvol = round(float(val), 2)
 
