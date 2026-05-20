@@ -3,11 +3,16 @@ Personal Trading Bot
 Automated trading with Alpaca API, technical analysis, and AI strategy generation
 """
 
-from alpaca_trade_api.rest import REST
-import yfinance as yf
+from alpaca.trading.client import TradingClient
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
+from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
+from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
+from alpaca.data.enums import DataFeed
 import pandas as pd
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 import time
 
@@ -27,16 +32,22 @@ class TradingBot:
         """Initialize the trading bot."""
         self.config = config
 
-        # Initialize Alpaca API — may be None if no credentials are configured yet.
-        # The dashboard profile system will swap this in via bot.api = REST(...)
+        # Initialize Alpaca clients — may be None if no credentials are configured yet.
+        # The dashboard profile system will swap these in via bot.trading_client / bot.data_client
         if config.ALPACA_API_KEY and config.ALPACA_SECRET_KEY:
-            self.api = REST(
-                key_id=config.ALPACA_API_KEY,
+            paper = config.PAPER_TRADING
+            self.trading_client = TradingClient(
+                api_key=config.ALPACA_API_KEY,
                 secret_key=config.ALPACA_SECRET_KEY,
-                base_url=config.ALPACA_BASE_URL
+                paper=paper,
+            )
+            self.data_client = StockHistoricalDataClient(
+                api_key=config.ALPACA_API_KEY,
+                secret_key=config.ALPACA_SECRET_KEY,
             )
         else:
-            self.api = None
+            self.trading_client = None
+            self.data_client = None
             logger.warning("No Alpaca credentials — bot started without API connection")
 
         # Initialize AI strategy generator (OpenAI-compatible: Ollama locally, DeepSeek in prod)
@@ -59,8 +70,8 @@ class TradingBot:
     # ===== MARKET DATA =====
 
     def _require_api(self) -> bool:
-        """Return True if the API client is ready, False otherwise."""
-        if self.api is None:
+        """Return True if the API clients are ready, False otherwise."""
+        if self.trading_client is None or self.data_client is None:
             logger.warning("Alpaca API not connected — add a profile in the dashboard")
             return False
         return True
@@ -89,9 +100,6 @@ class TradingBot:
                 return cached_data
 
         try:
-            from alpaca_trade_api.rest import TimeFrame, TimeFrameUnit
-            from datetime import timedelta
-
             tf_map = {
                 '1d':  TimeFrame.Day,
                 '1h':  TimeFrame.Hour,
@@ -102,40 +110,49 @@ class TradingBot:
             period_days = {
                 '1mo': 30, '2w': 14, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730, '5d': 5,
             }
-            tf = tf_map.get(interval, TimeFrame.Day)
+            tf   = tf_map.get(interval, TimeFrame.Day)
             days = period_days.get(period, 365)
 
-            end = datetime.now()
+            end   = datetime.now()
             start = end - timedelta(days=days)
 
-            bars = self.api.get_bars(
-                symbol, tf,
-                start=start.strftime('%Y-%m-%dT%H:%M:%SZ'),
-                end=end.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            request = StockBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=tf,
+                start=start,
+                end=end,
                 limit=10000,
-                feed='iex',
-            ).df
+                feed=DataFeed.IEX,
+            )
+            bars = self.data_client.get_stock_bars(request).df
 
             if bars.empty:
                 logger.warning(f"No data returned for {symbol}")
                 return pd.DataFrame()
 
+            # alpaca-py returns a MultiIndex (symbol, timestamp) — drop the symbol level
+            if isinstance(bars.index, pd.MultiIndex):
+                bars = bars.droplevel(0)
+
             # Standardize column names to lowercase
             bars.columns = [c.lower() for c in bars.columns]
 
-            # Calculate technical indicators
             # Fetch SPY for relative strength if this isn't SPY itself
             spy_data = pd.DataFrame()
             if symbol.upper() != 'SPY':
                 try:
-                    spy_bars = self.api.get_bars(
-                        'SPY', tf,
-                        start=start.strftime('%Y-%m-%dT%H:%M:%SZ'),
-                        end=end.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    spy_request = StockBarsRequest(
+                        symbol_or_symbols='SPY',
+                        timeframe=tf,
+                        start=start,
+                        end=end,
                         limit=10000,
-                        feed='iex',
-                    ).df
+                        feed=DataFeed.IEX,
+                    )
+                    spy_bars = self.data_client.get_stock_bars(spy_request).df
                     if not spy_bars.empty:
+                        if isinstance(spy_bars.index, pd.MultiIndex):
+                            spy_bars = spy_bars.droplevel(0)
                         spy_bars.columns = [c.lower() for c in spy_bars.columns]
                         spy_data = spy_bars
                 except Exception:
@@ -166,7 +183,7 @@ class TradingBot:
     def get_account(self):
         """Get account information."""
         try:
-            account = self.api.get_account()
+            account = self.trading_client.get_account()
             return {
                 'cash': float(account.cash),
                 'portfolio_value': float(account.portfolio_value),
@@ -180,7 +197,7 @@ class TradingBot:
     def get_positions(self):
         """Get current positions."""
         try:
-            positions = self.api.list_positions()
+            positions = self.trading_client.get_all_positions()
             return [{
                 'symbol': p.symbol,
                 'qty': float(p.qty),
@@ -197,14 +214,20 @@ class TradingBot:
     def get_orders(self, status='all'):
         """Get orders."""
         try:
-            orders = self.api.list_orders(status=status)
+            status_map = {
+                'all':    QueryOrderStatus.ALL,
+                'open':   QueryOrderStatus.OPEN,
+                'closed': QueryOrderStatus.CLOSED,
+            }
+            req = GetOrdersRequest(status=status_map.get(status, QueryOrderStatus.ALL))
+            orders = self.trading_client.get_orders(req)
             return [{
-                'id': o.id,
+                'id': str(o.id),
                 'symbol': o.symbol,
-                'side': o.side,
-                'type': o.type,
+                'side': o.side.value,
+                'type': o.type.value,
                 'qty': float(o.qty),
-                'status': o.status,
+                'status': o.status.value,
                 'created_at': o.created_at.isoformat()
             } for o in orders]
         except Exception as e:
@@ -256,16 +279,12 @@ class TradingBot:
         position_symbols = [p['symbol'] for p in positions]
 
         if side.lower() == 'buy':
-            # Check if already holding
             if symbol in position_symbols:
                 return False, f"Already holding {symbol}"
-
-            # Check max positions
             if len(positions) >= self.max_positions:
                 return False, f"Max positions reached ({self.max_positions})"
 
         elif side.lower() == 'sell':
-            # Check if holding the symbol
             if symbol not in position_symbols:
                 return False, f"Not holding {symbol}"
 
@@ -293,38 +312,34 @@ class TradingBot:
         Returns:
             dict: Trade result
         """
-        # Check if we can trade
         can_trade, reason = self.can_trade(symbol, side)
         if not can_trade:
             logger.info(f"Trade skipped: {reason}")
             return {'status': 'skipped', 'reason': reason}
 
-        # Calculate position size if not provided
         if quantity is None:
             if entry_price and stop_price:
                 quantity = self.calculate_position_size(entry_price, stop_price)
             else:
-                # Default to 10 shares if no sizing info
                 quantity = 10
 
-        # Execute the trade
         try:
-            order = self.api.submit_order(
+            order_side = OrderSide.BUY if side.lower() == 'buy' else OrderSide.SELL
+            req = MarketOrderRequest(
                 symbol=symbol,
                 qty=quantity,
-                side=side,
-                type='market',
-                time_in_force='day'
+                side=order_side,
+                time_in_force=TimeInForce.DAY,
             )
+            order = self.trading_client.submit_order(req)
 
-            # Log the trade
             trade_info = {
                 'timestamp': datetime.now().isoformat(),
                 'symbol': symbol,
                 'side': side,
                 'quantity': quantity,
-                'order_id': order.id,
-                'status': order.status
+                'order_id': str(order.id),
+                'status': order.status.value,
             }
 
             self._log_trade(trade_info)
@@ -541,16 +556,13 @@ class TradingBot:
                 for symbol in symbols:
                     logger.info(f"Analyzing {symbol}...")
 
-                    # Analyze the symbol
                     strategy = self.analyze_symbol(symbol)
 
-                    # Check for trading signals
                     if strategy.get('signals'):
                         for signal in strategy['signals']:
                             logger.info(f"Signal for {symbol}: {signal}")
 
                             if auto_trade and signal.get('side'):
-                                # Execute the trade
                                 result = self.execute_trade(
                                     symbol=signal['symbol'],
                                     side=signal['side'],
@@ -561,7 +573,6 @@ class TradingBot:
                     else:
                         logger.info(f"No signals for {symbol}")
 
-                # Wait before next check
                 logger.info(f"Waiting {interval}s before next check...")
                 time.sleep(interval)
 
@@ -570,12 +581,11 @@ class TradingBot:
                 break
             except Exception as e:
                 logger.error(f"Error in bot loop: {e}")
-                time.sleep(60)  # Wait 1 minute before retrying
+                time.sleep(60)
 
 
 def main():
     """Main entry point with safety checks."""
-    # Initialize logging
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -585,10 +595,8 @@ def main():
         ]
     )
 
-    # Initialize config
     config = Config()
 
-    # SAFETY CHECK: Confirm live trading
     if not config.PAPER_TRADING:
         print("\n" + "="*60)
         print("⚠️  WARNING: LIVE TRADING MODE ENABLED ⚠️")
@@ -605,17 +613,14 @@ def main():
 
         print("\n✅ Live trading confirmed. Starting bot...\n")
 
-    # Create bot
     bot = TradingBot(config)
 
-    # Check account
     account = bot.get_account()
     logger.info(f"Account equity: ${account.get('equity', 0):.2f}")
 
-    # Run bot with watchlist from config
     symbols = config.WATCHLIST
     logger.info(f"Watchlist: {symbols}")
-    bot.run(symbols, interval=3600, auto_trade=False)  # Check every hour
+    bot.run(symbols, interval=3600, auto_trade=False)
 
 
 if __name__ == '__main__':

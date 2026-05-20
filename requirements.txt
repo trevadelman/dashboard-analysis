@@ -1,48 +1,27 @@
-# ── Install instructions ──────────────────────────────────────────────────────
-# alpaca-trade-api pins websockets<11, but yfinance requires websockets>=13.
-# Install alpaca-trade-api with --no-deps first, then install everything else.
-# This lets yfinance pull in websockets>=13 without the constraint blocking it.
-# alpaca-trade-api works fine at runtime with websockets 13+ despite the pin.
-#
-#   pip install --no-deps alpaca-trade-api==3.2.0
-#   pip install -r requirements.txt
-#
-# ─────────────────────────────────────────────────────────────────────────────
-
 # ── Alpaca ────────────────────────────────────────────────────────────────────
-alpaca-trade-api==3.2.0
-
-# alpaca-trade-api runtime deps (installed explicitly since we use --no-deps above)
-aiohttp>=3.11.0
-deprecation>=2.1.0
-msgpack>=1.0.0
-PyYAML>=6.0.0
-requests>=2.32.0
-urllib3>=1.26.0,<2
-websocket-client>=1.8.0,<2
+alpaca-py==0.43.4
 
 # ── Data & Analysis ───────────────────────────────────────────────────────────
-pandas>=2.2.0
-numpy>=2.0.0
-yfinance>=1.3.0
+pandas==3.0.3
+numpy==2.4.6
+yfinance==1.3.0
 
 # ── AI Integration ────────────────────────────────────────────────────────────
-# OpenAI-compatible client — works with Ollama locally and DeepSeek in prod
-openai>=2.0.0
+openai==2.37.0
 
 # ── Encryption (profile credential storage) ───────────────────────────────────
-cryptography>=48.0.0
+cryptography==48.0.0
 
 # ── Web Dashboard ─────────────────────────────────────────────────────────────
-fastapi>=0.110.0
-uvicorn>=0.29.0
-python-multipart>=0.0.9
-jinja2>=3.1.0
-itsdangerous>=2.1.0
-starlette>=0.40.0
+fastapi==0.136.1
+uvicorn==0.47.0
+python-multipart==0.0.29
+jinja2==3.1.6
+itsdangerous==2.2.0
+starlette==1.0.0
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
-python-dotenv>=1.0.0
+python-dotenv==1.2.2
 
 # ── Development ───────────────────────────────────────────────────────────────
-pytest>=8.0.0
+pytest==9.0.3

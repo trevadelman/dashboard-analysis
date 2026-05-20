@@ -12,7 +12,10 @@ from datetime import datetime, timedelta
 from typing import Generator
 
 import pandas as pd
-from alpaca_trade_api.rest import REST, TimeFrame
+from alpaca.data.historical import StockHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest
+from alpaca.data.timeframe import TimeFrame
+from alpaca.data.enums import DataFeed
 
 from analysis.indicators import TechnicalIndicators
 from screeners.symbol_lists import (
@@ -43,8 +46,8 @@ class MarketScanner:
     of the SignalHierarchy using Alpaca daily bars.
     """
 
-    def __init__(self, api: REST):
-        self._api = api
+    def __init__(self, data_client: StockHistoricalDataClient):
+        self._data_client = data_client
         self._spy_data: pd.DataFrame = pd.DataFrame()
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -122,7 +125,6 @@ class MarketScanner:
     def _fetch_bars(self, symbol: str, timeframe: str = "long") -> pd.DataFrame:
         """Fetch bars for a symbol from Alpaca (IEX feed — free tier compatible)."""
         from datetime import timezone
-        from alpaca_trade_api.rest import TimeFrameUnit
 
         interval, days = self._TF_CONFIG.get(timeframe, ("1d", 365))
         tf_obj = {
@@ -133,16 +135,20 @@ class MarketScanner:
         try:
             end   = datetime.now(timezone.utc)
             start = end - timedelta(days=days)
-            bars  = self._api.get_bars(
-                symbol,
-                tf_obj,
-                start=start.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                end=end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            request = StockBarsRequest(
+                symbol_or_symbols=symbol,
+                timeframe=tf_obj,
+                start=start,
+                end=end,
                 limit=10000,
-                feed="iex",
-            ).df
+                feed=DataFeed.IEX,
+            )
+            bars = self._data_client.get_stock_bars(request).df
             if bars.empty:
                 return pd.DataFrame()
+            # alpaca-py returns a MultiIndex (symbol, timestamp) — drop the symbol level
+            if isinstance(bars.index, pd.MultiIndex):
+                bars = bars.droplevel(0)
             bars.columns = [c.lower() for c in bars.columns]
             return bars
         except Exception as e:

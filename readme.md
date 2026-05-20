@@ -71,7 +71,6 @@ cd dashboard-analysis
 python3 -m venv venv
 source venv/bin/activate        # macOS / Linux
 # venv\Scripts\activate         # Windows
-pip install --no-deps alpaca-trade-api==3.2.0
 pip install -r requirements.txt
 ```
 
@@ -163,16 +162,14 @@ Click any result row to expand the Tier 1/2 reasoning inline. Use "Open in Dashb
 
 ### `pip install` fails with dependency conflicts
 
-`alpaca-trade-api` pins `websockets<11`, but `yfinance>=1.3.0` requires `websockets>=13`. pip can't resolve both at once. The fix is to install `alpaca-trade-api` first with `--no-deps` (bypassing its constraint), then install everything else normally:
+**Always use a virtual environment** (see Setup step 1). Installing globally makes these conflicts much harder to untangle.
+
+If you still hit conflicts, try upgrading pip first:
 
 ```bash
-pip install --no-deps alpaca-trade-api==3.2.0
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
-
-`alpaca-trade-api` works fine at runtime with `websockets 13+` — the pin in its metadata is just overly conservative.
-
-**Always use a virtual environment** (see Setup step 1). Installing globally makes these conflicts much harder to untangle.
 
 ### App starts but Alpaca data doesn't load
 

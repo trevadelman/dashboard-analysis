@@ -229,33 +229,42 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
 
     async def _activate_and_connect(profile_id: int):
         """
-        Activate a profile and reconnect the bot's Alpaca API client.
+        Activate a profile and reconnect the bot's Alpaca API clients.
         Verifies the credentials work before committing.
         """
-        from alpaca_trade_api.rest import REST
+        from alpaca.trading.client import TradingClient
+        from alpaca.data.historical import StockHistoricalDataClient
 
         profile = activate_profile(profile_id)
         if not profile:
             return JSONResponse({"error": "Profile not found"}, status_code=404)
 
         try:
-            base_url = "https://paper-api.alpaca.markets" if profile["paper_trading"] else "https://api.alpaca.markets"
-            new_api  = REST(key_id=profile["api_key"], secret_key=profile["secret_key"], base_url=base_url)
-            account  = new_api.get_account()
+            paper = bool(profile["paper_trading"])
+            new_trading = TradingClient(
+                api_key=profile["api_key"],
+                secret_key=profile["secret_key"],
+                paper=paper,
+            )
+            new_data = StockHistoricalDataClient(
+                api_key=profile["api_key"],
+                secret_key=profile["secret_key"],
+            )
+            account = new_trading.get_account()
 
-            bot.api = new_api
-            bot.config.ALPACA_API_KEY    = profile["api_key"]
-            bot.config.ALPACA_SECRET_KEY = profile["secret_key"]
-            bot.config.PAPER_TRADING     = bool(profile["paper_trading"])
-            bot.config.ALPACA_BASE_URL   = base_url
+            bot.trading_client            = new_trading
+            bot.data_client               = new_data
+            bot.config.ALPACA_API_KEY     = profile["api_key"]
+            bot.config.ALPACA_SECRET_KEY  = profile["secret_key"]
+            bot.config.PAPER_TRADING      = paper
             bot._data_cache.clear()
 
-            logger.info(f"Activated profile '{profile['name']}' (paper={profile['paper_trading']})")
+            logger.info(f"Activated profile '{profile['name']}' (paper={paper})")
             return {
-                "status": "ok",
+                "status":       "ok",
                 "profile_id":   profile_id,
                 "profile_name": profile["name"],
-                "paper":        bool(profile["paper_trading"]),
+                "paper":        paper,
                 "equity":       float(account.equity),
             }
 
@@ -279,17 +288,18 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
             if not api_key or not secret_key:
                 return JSONResponse({"error": "api_key and secret_key are required"}, status_code=400)
 
-            from alpaca_trade_api.rest import REST
+            from alpaca.trading.client import TradingClient
+            from alpaca.data.historical import StockHistoricalDataClient
 
-            base_url = "https://paper-api.alpaca.markets" if paper else "https://api.alpaca.markets"
-            new_api  = REST(key_id=api_key, secret_key=secret_key, base_url=base_url)
-            account  = new_api.get_account()
+            new_trading = TradingClient(api_key=api_key, secret_key=secret_key, paper=paper)
+            new_data    = StockHistoricalDataClient(api_key=api_key, secret_key=secret_key)
+            account     = new_trading.get_account()
 
-            bot.api = new_api
+            bot.trading_client           = new_trading
+            bot.data_client              = new_data
             bot.config.ALPACA_API_KEY    = api_key
             bot.config.ALPACA_SECRET_KEY = secret_key
             bot.config.PAPER_TRADING     = paper
-            bot.config.ALPACA_BASE_URL   = base_url
             bot._data_cache.clear()
 
             saved_profile = None
@@ -375,16 +385,21 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
 
             time_in_force = data.get("time_in_force", "gtc")
 
-            order = bot.api.submit_order(
+            from alpaca.trading.requests import MarketOrderRequest, TakeProfitRequest, StopLossRequest
+            from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass
+
+            order_side = OrderSide.BUY if side.lower() == "buy" else OrderSide.SELL
+            tif = TimeInForce.GTC if time_in_force == "gtc" else TimeInForce.DAY
+            req = MarketOrderRequest(
                 symbol=symbol,
                 qty=quantity,
-                side=side,
-                type="market",
-                time_in_force=time_in_force,
-                order_class="bracket",
-                stop_loss={"stop_price": round(stop_price, 2)},
-                take_profit={"limit_price": round(target_price, 2)},
+                side=order_side,
+                time_in_force=tif,
+                order_class=OrderClass.BRACKET,
+                take_profit=TakeProfitRequest(limit_price=round(target_price, 2)),
+                stop_loss=StopLossRequest(stop_price=round(stop_price, 2)),
             )
+            order = bot.trading_client.submit_order(req)
 
             trade_info = {
                 "timestamp": datetime.now().isoformat(),
@@ -394,8 +409,8 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
                 "entry_price": entry_price,
                 "stop_price": stop_price,
                 "target_price": target_price,
-                "order_id": order.id,
-                "status": order.status,
+                "order_id": str(order.id),
+                "status": order.status.value,
             }
             bot._log_trade(trade_info)
             logger.info(
@@ -426,7 +441,7 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
                 yield f"data: {_json.dumps({'type': 'error', 'message': 'No Alpaca credentials — add a profile first'})}\n\n"
             return StreamingResponse(no_api(), media_type="text/event-stream")
 
-        scanner = MarketScanner(bot.api)
+        scanner = MarketScanner(bot.data_client)
 
         def event_generator():
             try:
@@ -592,13 +607,23 @@ def create_app() -> FastAPI:
         seed_from_env(config.ALPACA_API_KEY, config.ALPACA_SECRET_KEY, config.PAPER_TRADING)
 
     from data.profile_store import get_active_profile
+    from alpaca.trading.client import TradingClient
+    from alpaca.data.historical import StockHistoricalDataClient
+
     active = get_active_profile()
-    if active and bot.api is None:
+    if active and bot.trading_client is None:
         # Reconnect using the persisted active profile
-        from alpaca_trade_api.rest import REST
         try:
-            base_url = "https://paper-api.alpaca.markets" if active["paper_trading"] else "https://api.alpaca.markets"
-            bot.api  = REST(key_id=active["api_key"], secret_key=active["secret_key"], base_url=base_url)
+            paper = bool(active["paper_trading"])
+            bot.trading_client = TradingClient(
+                api_key=active["api_key"],
+                secret_key=active["secret_key"],
+                paper=paper,
+            )
+            bot.data_client = StockHistoricalDataClient(
+                api_key=active["api_key"],
+                secret_key=active["secret_key"],
+            )
             logger.info(f"Restored active profile '{active['name']}' on startup")
         except Exception as e:
             logger.warning(f"Could not restore active profile on startup: {e}")
