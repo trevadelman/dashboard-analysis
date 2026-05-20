@@ -200,7 +200,7 @@ function signalRow(r) {
     const rsCls   = rsVal != null && Math.abs(rsVal) >= 2 ? (rsVal > 0 ? 'text-success' : 'text-error') : '';
     const rsStr   = rsVal != null ? (rsVal > 0 ? '+' : '') + rsVal : '—';
     return `
-        <tr class="cursor-pointer hover:bg-base-200" onclick="window.location='/dashboard?symbol=${r.symbol}'">
+        <tr class="cursor-pointer hover:bg-base-200" onclick="window.location='/?symbol=${r.symbol}'">
             <td class="font-mono font-semibold text-sm">${r.symbol}</td>
             <td class="text-xs text-base-content/50">${tfLabel}</td>
             <td><span class="badge ${sigCls} badge-sm">${r.signal}</span></td>
@@ -268,7 +268,7 @@ function setupRow(r, rank) {
     const rsCls    = rsVal != null && Math.abs(rsVal) >= 2 ? (rsVal > 0 ? 'text-success' : 'text-error') : '';
     const rsStr    = rsVal != null ? (rsVal > 0 ? '+' : '') + rsVal : '—';
     return `
-        <tr class="cursor-pointer hover:bg-base-200" onclick="window.location='/dashboard?symbol=${r.symbol}'">
+        <tr class="cursor-pointer hover:bg-base-200" onclick="window.location='/?symbol=${r.symbol}'">
             <td class="text-xs text-base-content/40">${rank}</td>
             <td class="font-mono font-semibold text-sm">${r.symbol}</td>
             <td><span class="badge ${sigCls} badge-sm">${sigLabel}</span></td>
