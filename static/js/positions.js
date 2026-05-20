@@ -226,12 +226,6 @@ function buildPositionCard(p, orders, expanded) {
                 })()}
             </div>
 
-            <!-- Actions -->
-            <div class="flex justify-end gap-2">
-                <a href="/?symbol=${encodeURIComponent(p.symbol)}" class="btn btn-primary btn-sm gap-2">
-                    <i class="bi bi-graph-up"></i> Analyze
-                </a>
-            </div>
         </div>
     </div>`;
 }
