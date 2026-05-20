@@ -5,7 +5,6 @@ Provides pre-built lists and dynamic fetching from various sources
 
 import logging
 from typing import List, Dict, Any
-from pycoingecko import CoinGeckoAPI
 import time
 
 logger = logging.getLogger(__name__)
@@ -54,7 +53,6 @@ class SymbolListManager:
 
     def __init__(self):
         """Initialize symbol list manager."""
-        self.cg = CoinGeckoAPI()
         self._crypto_cache = None
         self._crypto_cache_time = 0
         self._cache_duration = 3600  # 1 hour
@@ -88,58 +86,8 @@ class SymbolListManager:
             return self.get_stock_universe('liquid')
 
     def get_crypto_universe(self, limit: int = 300) -> List[Dict[str, Any]]:
-        """
-        Get crypto universe from CoinGecko.
-
-        Args:
-            limit: Maximum number of coins to return (default: 300)
-
-        Returns:
-            List of dicts with coin info: {symbol, name, market_cap, volume}
-        """
-        # Check cache
-        if self._crypto_cache and (time.time() - self._crypto_cache_time < self._cache_duration):
-            logger.debug("Using cached crypto list")
-            return self._crypto_cache[:limit]
-
-        try:
-            logger.info(f"Fetching top {limit} crypto from CoinGecko...")
-
-            # Get coins by market cap
-            coins = self.cg.get_coins_markets(
-                vs_currency='usd',
-                order='market_cap_desc',
-                per_page=min(limit, 250),  # CoinGecko limit per page
-                page=1,
-                sparkline=False
-            )
-
-            # Format for our use
-            crypto_list = []
-            for coin in coins:
-                # Yahoo Finance format: SYMBOL-USD
-                yahoo_symbol = f"{coin['symbol'].upper()}-USD"
-
-                crypto_list.append({
-                    'symbol': yahoo_symbol,
-                    'name': coin['name'],
-                    'market_cap': coin.get('market_cap', 0),
-                    'volume_24h': coin.get('total_volume', 0),
-                    'price': coin.get('current_price', 0),
-                    'rank': coin.get('market_cap_rank', 999)
-                })
-
-            # Cache results
-            self._crypto_cache = crypto_list
-            self._crypto_cache_time = time.time()
-
-            logger.info(f"Retrieved {len(crypto_list)} crypto symbols")
-            return crypto_list
-
-        except Exception as e:
-            logger.error(f"Error fetching crypto list: {e}")
-            # Return fallback list
-            return self._get_fallback_crypto()
+        """Return the static fallback crypto list (CoinGecko not used)."""
+        return self._get_fallback_crypto()[:limit]
 
     def _get_fallback_crypto(self) -> List[Dict[str, Any]]:
         """Fallback crypto list if CoinGecko fails."""
