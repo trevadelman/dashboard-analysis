@@ -52,10 +52,11 @@ class MarketScanner:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    # Timeframe → (interval, days, TimeFrame constant)
+    # Timeframe → (interval, days)
     _TF_CONFIG = {
         "long":  ("1d",  365),
         "swing": ("1h",  90),
+        "short": ("15m", 14),
     }
 
     def scan_stream(
@@ -127,9 +128,11 @@ class MarketScanner:
         from datetime import timezone
 
         interval, days = self._TF_CONFIG.get(timeframe, ("1d", 365))
+        from alpaca.data.timeframe import TimeFrameUnit
         tf_obj = {
-            "1d": TimeFrame.Day,
-            "1h": TimeFrame.Hour,
+            "1d":  TimeFrame.Day,
+            "1h":  TimeFrame.Hour,
+            "15m": TimeFrame(15, TimeFrameUnit.Minute),
         }.get(interval, TimeFrame.Day)
 
         try:
