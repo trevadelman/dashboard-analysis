@@ -221,15 +221,37 @@ class TradingBot:
             }
             req = GetOrdersRequest(status=status_map.get(status, QueryOrderStatus.ALL))
             orders = self.trading_client.get_orders(req)
-            return [{
-                'id': str(o.id),
-                'symbol': o.symbol,
-                'side': o.side.value,
-                'type': o.type.value,
-                'qty': float(o.qty),
-                'status': o.status.value,
-                'created_at': o.created_at.isoformat()
-            } for o in orders]
+            result = []
+            for o in orders:
+                legs = []
+                if o.legs:
+                    for leg in o.legs:
+                        legs.append({
+                            'id':         str(leg.id),
+                            'type':       leg.type.value,
+                            'side':       leg.side.value,
+                            'qty':        float(leg.qty) if leg.qty else None,
+                            'status':     leg.status.value,
+                            'limit_price': float(leg.limit_price) if leg.limit_price else None,
+                            'stop_price':  float(leg.stop_price)  if leg.stop_price  else None,
+                        })
+                result.append({
+                    'id':          str(o.id),
+                    'symbol':      o.symbol,
+                    'side':        o.side.value,
+                    'type':        o.type.value,
+                    'order_class': o.order_class.value if o.order_class else None,
+                    'qty':         float(o.qty),
+                    'filled_qty':  float(o.filled_qty) if o.filled_qty else 0,
+                    'filled_avg_price': float(o.filled_avg_price) if o.filled_avg_price else None,
+                    'limit_price': float(o.limit_price) if o.limit_price else None,
+                    'stop_price':  float(o.stop_price)  if o.stop_price  else None,
+                    'status':      o.status.value,
+                    'created_at':  o.created_at.isoformat(),
+                    'updated_at':  o.updated_at.isoformat() if o.updated_at else None,
+                    'legs':        legs,
+                })
+            return result
         except Exception as e:
             logger.error(f"Error getting orders: {e}")
             return []

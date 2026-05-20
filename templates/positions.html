@@ -1,0 +1,33 @@
+{% extends "layout.html" %}
+
+{% block title %}Positions — Alpaca Trading{% endblock %}
+
+{% block head %}
+<style>
+    .main-content { padding: 1.5rem; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="main-content">
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold flex items-center gap-2">
+            <i class="bi bi-bar-chart-fill text-primary"></i>
+            Open Positions
+        </h1>
+        <button class="btn btn-ghost btn-sm gap-2" onclick="loadPositions()">
+            <i class="bi bi-arrow-clockwise"></i> Refresh
+        </button>
+    </div>
+
+    <!-- Summary stats bar -->
+    <div id="positions-summary"></div>
+
+    <!-- Position accordion cards -->
+    <div id="positions-container" class="space-y-3"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/positions.js"></script>
+{% endblock %}

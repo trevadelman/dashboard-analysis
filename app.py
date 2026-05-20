@@ -88,6 +88,10 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
     async def scanner_page(request: Request, _=Depends(login_required)):
         return templates.TemplateResponse(request, "scanner.html", {"active_page": "scanner"})
 
+    @app.get("/positions", response_class=HTMLResponse)
+    async def positions_page(request: Request, _=Depends(login_required)):
+        return templates.TemplateResponse(request, "positions.html", {"active_page": "positions"})
+
     # ===== API ROUTES =====
 
     @app.get("/api/account")
@@ -118,6 +122,18 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
             return bot.get_orders(status)
         except Exception as e:
             logger.error(f"Error getting orders: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/positions/{symbol}/orders")
+    async def get_position_orders(symbol: str, request: Request, _=Depends(login_required)):
+        """Return all open orders related to a specific symbol."""
+        if not bot._require_api():
+            return []
+        try:
+            orders = bot.get_orders(status="open")
+            return [o for o in orders if o["symbol"].upper() == symbol.upper()]
+        except Exception as e:
+            logger.error(f"Error getting orders for {symbol}: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.get("/api/trades")

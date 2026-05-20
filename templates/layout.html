@@ -216,7 +216,7 @@
         <!-- Drawer sidebar -->
         <div class="drawer-side z-50">
             <label for="nav-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
-            <ul class="menu bg-base-200 min-h-full w-72 p-4 gap-1">
+            <ul class="menu bg-base-200 min-h-full w-72 p-4 gap-1 flex flex-col">
                 <li class="menu-title text-xs uppercase tracking-widest text-base-content/50 mb-2">Navigation</li>
                 <li>
                     <a href="/" class="{{ 'active font-semibold' if active_page == 'dashboard' else '' }}">
@@ -231,6 +231,14 @@
                     </a>
                 </li>
                 <div class="divider my-2"></div>
+                <li>
+                    <a href="/positions" class="{{ 'active font-semibold' if active_page == 'positions' else '' }}">
+                        <i class="bi bi-bar-chart-fill text-lg"></i>
+                        Positions
+                    </a>
+                </li>
+                <!-- Spacer pushes Settings to the bottom -->
+                <div class="flex-1"></div>
                 <li>
                     <a href="#" onclick="document.getElementById('settings-modal').showModal(); loadSettings(); document.getElementById('nav-drawer').checked = false;" class="text-base-content/70">
                         <i class="bi bi-gear text-lg"></i>

@@ -23,16 +23,17 @@ async function updatePositions() {
         container.innerHTML = positions.map(p => {
             const plClass = p.unrealized_pl >= 0 ? 'text-success' : 'text-error';
             const plPct   = (p.unrealized_plpc * 100).toFixed(2);
-            return `<div class="card bg-base-200 mb-2">
+            const sym     = p.symbol;
+            return `<a href="/positions?symbol=${sym}" class="block card bg-base-200 mb-2 hover:bg-base-300 transition-colors">
                 <div class="card-body p-3">
                     <div class="flex justify-between items-center">
-                        <strong class="text-sm">${p.symbol}</strong>
+                        <strong class="text-sm">${sym}</strong>
                         <span class="${plClass} text-sm font-semibold">${p.unrealized_pl >= 0 ? '+' : ''}$${p.unrealized_pl.toFixed(2)} (${plPct}%)</span>
                     </div>
                     <div class="text-xs text-base-content/60 mt-1">${p.qty} shares · Entry $${p.avg_entry_price.toFixed(2)} · Now $${p.current_price.toFixed(2)}</div>
                     <div class="text-xs text-base-content/60">Value: $${p.market_value.toFixed(2)}</div>
                 </div>
-            </div>`;
+            </a>`;
         }).join('');
     } else {
         container.innerHTML = '<div class="text-center text-base-content/60 text-sm py-3">No open positions</div>';
