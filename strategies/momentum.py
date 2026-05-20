@@ -176,11 +176,6 @@ class SignalHierarchy:
         audit.append(tier4)
         yield tier4
 
-        # AI Commentary
-        if self.ai:
-            commentary = self.ai.get_ai_commentary(data, symbol, audit)
-            yield {'type': 'ai_commentary', 'timeframe': tf, 'text': commentary}
-
         # Final verdict
         regime_ok    = regime != 'NO_TRADE'
         ai_ok        = tier3['result'] in ('PASS', 'SKIPPED')

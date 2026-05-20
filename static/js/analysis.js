@@ -90,9 +90,9 @@ function buildAiCommentaryCard(text) {
 // ===== TIMEFRAME ROW HELPERS =====
 
 const TF_META = {
-    long:  { label: '📅 Long-term',  sub: '1D · 1 year' },
-    swing: { label: '📊 Swing',      sub: '1H · 3 months' },
-    short: { label: '⚡ Short-term', sub: '15m · 1 month' },
+    long:  { label: 'Long-term',  icon: 'bi-calendar3',      sub: '1D · 1 year' },
+    swing: { label: 'Swing',      icon: 'bi-bar-chart-line',  sub: '1H · 3 months' },
+    short: { label: 'Short-term', icon: 'bi-lightning',       sub: '15m · 1 month' },
 };
 
 const VERDICT_BADGE = {
@@ -103,30 +103,29 @@ const VERDICT_BADGE = {
 };
 
 const OVERALL_STYLE = {
-    ALIGNED:  { badge: 'badge-success', icon: '✅', label: 'ALIGNED' },
-    PARTIAL:  { badge: 'badge-warning', icon: '⚠️', label: 'PARTIAL' },
-    CAUTION:  { badge: 'badge-error',   icon: '⛔', label: 'CAUTION' },
-    MIXED:    { badge: 'badge-ghost',   icon: '↔️', label: 'MIXED' },
+    ALIGNED:  { badge: 'badge-success', label: 'ALIGNED' },
+    PARTIAL:  { badge: 'badge-warning', label: 'PARTIAL' },
+    CAUTION:  { badge: 'badge-error',   label: 'CAUTION' },
+    MIXED:    { badge: 'badge-ghost',   label: 'MIXED' },
 };
 
 function buildTimeframeRow(tf) {
     const meta = TF_META[tf];
     return `
-        <div id="tf-row-${tf}" class="flex items-center justify-between p-3 rounded-lg bg-base-100 border border-base-300 cursor-pointer hover:bg-base-200 transition-colors" onclick="toggleTfPanel('${tf}')">
-            <div>
-                <span class="font-semibold text-sm">${meta.label}</span>
-                <span class="text-xs text-base-content/50 ml-2">${meta.sub}</span>
-            </div>
-            <div class="flex items-center gap-2">
+        <div class="rounded-lg bg-base-100 border border-base-300 flex flex-col">
+            <!-- Column header — always visible -->
+            <div class="flex items-center justify-between p-3 border-b border-base-300">
+                <div>
+                    <span class="font-semibold text-sm">${meta.label}</span>
+                    <span class="text-xs text-base-content/50 ml-2">${meta.sub}</span>
+                </div>
                 <span id="tf-badge-${tf}" class="badge badge-ghost badge-sm">
                     <span class="loading loading-spinner loading-xs"></span>
                 </span>
-                <i id="tf-chevron-${tf}" class="bi bi-chevron-down text-xs text-base-content/40 transition-transform rotate-180"></i>
             </div>
-        </div>
-        <div id="tf-panel-${tf}" class="pl-2 pr-1 pb-2">
-            <div id="tf-tiers-${tf}" class="space-y-1 mt-2"></div>
-            <div id="tf-commentary-${tf}"></div>
+            <!-- Tier cards stream in here -->
+            <div id="tf-tiers-${tf}" class="space-y-1 p-2 flex-1"></div>
+            <div id="tf-commentary-${tf}" class="px-2 pb-2"></div>
         </div>`;
 }
 
@@ -162,7 +161,11 @@ async function runAnalysis() {
     const output = document.getElementById('analysis-results-content');
     window.currentSymbol = symbol;
 
-    // Build the skeleton UI
+    // Reset the consolidated AI commentary container
+    const aiWrap = document.getElementById('analysis-ai-commentary');
+    if (aiWrap) { aiWrap.innerHTML = ''; aiWrap.classList.add('hidden'); }
+
+    // Build the skeleton UI — three columns side by side
     output.innerHTML = `
         <div class="mb-4">
             <div class="flex items-center justify-between mb-3">
@@ -171,7 +174,7 @@ async function runAnalysis() {
                     <span class="loading loading-spinner loading-xs mr-1"></span> Analyzing…
                 </span>
             </div>
-            <div class="space-y-2" id="tf-rows">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-3" id="tf-rows">
                 ${buildTimeframeRow('long')}
                 ${buildTimeframeRow('swing')}
                 ${buildTimeframeRow('short')}
@@ -203,8 +206,17 @@ async function runAnalysis() {
         }
 
         if (event.type === 'ai_commentary') {
-            const container = document.getElementById(`tf-commentary-${event.timeframe}`);
-            if (container) container.innerHTML = buildAiCommentaryCard(event.text);
+            // Consolidated commentary (timeframe='all') goes below the grid
+            if (event.timeframe === 'all') {
+                const wrap = document.getElementById('analysis-ai-commentary');
+                if (wrap) {
+                    wrap.innerHTML = buildAiCommentaryCard(event.text);
+                    wrap.classList.remove('hidden');
+                }
+            } else {
+                const container = document.getElementById(`tf-commentary-${event.timeframe}`);
+                if (container) container.innerHTML = buildAiCommentaryCard(event.text);
+            }
         }
 
         if (event.type === 'done') {
@@ -216,7 +228,7 @@ async function runAnalysis() {
             if (event.blocked_at) {
                 const container = document.getElementById(`tf-tiers-${event.timeframe}`);
                 if (container) container.insertAdjacentHTML('beforeend',
-                    `<div class="alert alert-warning py-2 text-xs mb-1"><span>⛔ Blocked at: <strong>${event.blocked_at}</strong></span></div>`);
+                    `<div class="alert alert-warning py-2 text-xs mb-1"><span>Blocked at: <strong>${event.blocked_at}</strong></span></div>`);
             }
         }
 
@@ -225,7 +237,7 @@ async function runAnalysis() {
             const overallBadge = document.getElementById('overall-badge');
             if (overallBadge) {
                 overallBadge.className = `badge ${style.badge}`;
-                overallBadge.textContent = `${style.icon} ${style.label}`;
+                overallBadge.textContent = style.label;
             }
 
             if (event.signals && event.signals.length > 0) {
@@ -247,7 +259,7 @@ async function runAnalysis() {
         const overallBadge = document.getElementById('overall-badge');
         if (overallBadge) {
             overallBadge.className = 'badge badge-error';
-            overallBadge.textContent = '❌ Stream failed';
+            overallBadge.textContent = 'Stream failed';
         }
     };
 }

@@ -553,6 +553,7 @@ class TradingBot:
         # Compute overall verdict from the three done events
         verdicts = []
         all_signals = []
+        all_audits  = {}
         for tf_name in ('long', 'swing', 'short'):
             r = results.get(tf_name)
             if r is None:
@@ -564,6 +565,8 @@ class TradingBot:
                 verdicts.append('NO_TRADE')
             else:
                 verdicts.append('NO_ENTRY')
+            if r:
+                all_audits[tf_name] = r.get('audit', [])
 
         signal_count = verdicts.count('SIGNAL')
         if signal_count == 3:
@@ -588,6 +591,29 @@ class TradingBot:
             'timestamp': datetime.now().isoformat(),
         }, default=str)
         yield f"data: {summary_payload}\n\n"
+
+        # Single consolidated AI commentary across all three timeframes
+        if use_ai_confirmation and ai_gen:
+            try:
+                # Build a combined audit summary for the AI
+                combined_audit = []
+                for tf_name in ('long', 'swing', 'short'):
+                    for tier in all_audits.get(tf_name, []):
+                        combined_audit.append({**tier, 'timeframe': tf_name})
+                # Use the long-timeframe data as the primary data source for the prompt
+                primary_data = fetched.get(('long', 'symbol'), pd.DataFrame())
+                if primary_data.empty:
+                    primary_data = fetched.get(('swing', 'symbol'), pd.DataFrame())
+                if not primary_data.empty:
+                    commentary = ai_gen.get_ai_commentary(primary_data, symbol, combined_audit)
+                    commentary_payload = _json.dumps({
+                        'type': 'ai_commentary',
+                        'timeframe': 'all',
+                        'text': commentary,
+                    }, default=str)
+                    yield f"data: {commentary_payload}\n\n"
+            except Exception as e:
+                logger.warning(f"AI commentary failed for {symbol}: {e}")
 
     # ===== BOT LOOP =====
 
