@@ -1,0 +1,123 @@
+{% extends "layout.html" %}
+
+{% block title %}Backtest — Alpaca Trading{% endblock %}
+
+{% block content %}
+<div class="page-content-wide">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+        <h1 class="text-2xl font-bold flex items-center gap-2">
+            <i class="bi bi-clock-history text-primary"></i>
+            Backtest
+        </h1>
+    </div>
+
+    <!-- Controls card -->
+    <div class="card bg-base-100 border border-base-300 shadow-sm mb-6">
+        <div class="card-body">
+            <div class="flex flex-wrap gap-4 items-end">
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text font-medium">Symbol</span></label>
+                    <input id="bt-symbol" type="text" value="SPY"
+                           class="input input-bordered input-sm w-28 uppercase"
+                           placeholder="SPY" />
+                </div>
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text font-medium">Timeframe</span></label>
+                    <select id="bt-timeframe" class="select select-bordered select-sm">
+                        <option value="long" selected>Long (Daily)</option>
+                        <option value="swing">Swing (Hourly)</option>
+                        <option value="short">Short (15-min)</option>
+                    </select>
+                </div>
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text font-medium">Period</span></label>
+                    <select id="bt-period" class="select select-bordered select-sm">
+                        <option value="3mo">3 Months</option>
+                        <option value="6mo">6 Months</option>
+                        <option value="1y" selected>1 Year</option>
+                        <option value="2y">2 Years</option>
+                        <option value="3y">3 Years</option>
+                    </select>
+                </div>
+                <button id="bt-run-btn" class="btn btn-primary btn-sm gap-2" onclick="runBacktest()">
+                    <i class="bi bi-play-fill"></i> Run Backtest
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading state -->
+    <div id="bt-loading" class="hidden flex justify-center py-16">
+        <div class="text-center">
+            <span class="loading loading-spinner loading-lg text-primary mb-3"></span>
+            <p class="text-base-content/60 text-sm">Running walk-forward backtest…</p>
+        </div>
+    </div>
+
+    <!-- Error state -->
+    <div id="bt-error" class="hidden alert alert-error mb-6"></div>
+
+    <!-- Results (hidden until run) -->
+    <div id="bt-results" class="hidden space-y-6">
+
+        <!-- Summary stats -->
+        <div id="bt-summary-bar"></div>
+
+        <!-- Equity curve -->
+        <div class="card bg-base-100 border border-base-300 shadow-sm">
+            <div class="card-body pb-4">
+                <h2 class="card-title text-base mb-2">
+                    <i class="bi bi-graph-up text-primary"></i>
+                    Equity Curve (R)
+                </h2>
+                <div class="bg-base-200 rounded-xl p-3">
+                    <div id="bt-equity-chart" style="height: 240px; width: 100%;"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trades table -->
+        <div class="card bg-base-100 border border-base-300 shadow-sm">
+            <div class="card-body">
+                <div class="flex items-center justify-between mb-3">
+                    <h2 class="card-title text-base">
+                        <i class="bi bi-table text-primary"></i>
+                        Trades
+                    </h2>
+                    <button class="btn btn-ghost btn-xs gap-1" onclick="exportCsv()">
+                        <i class="bi bi-download"></i> CSV
+                    </button>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="table table-sm table-zebra w-full">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>Date</th>
+                                <th>Action</th>
+                                <th>Entry</th>
+                                <th>Stop</th>
+                                <th>Target</th>
+                                <th>R Risk</th>
+                                <th>Outcome</th>
+                                <th>R Multiple</th>
+                                <th>Exit Date</th>
+                                <th>Bars Held</th>
+                                <th>Tier</th>
+                            </tr>
+                        </thead>
+                        <tbody id="bt-trades-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/backtest.js"></script>
+{% endblock %}

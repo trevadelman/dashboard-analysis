@@ -24,7 +24,7 @@ from screeners.symbol_lists import (
     MAJOR_ETFS,
     RUSSELL2000_SAMPLE,
 )
-from strategies.momentum import SignalHierarchy
+from strategies.momentum import SignalHierarchy, TIMEFRAME_CONFIG
 
 logger = logging.getLogger(__name__)
 
@@ -52,13 +52,6 @@ class MarketScanner:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    # Timeframe → (interval, days)
-    _TF_CONFIG = {
-        "long":  ("1d",  365),
-        "swing": ("1h",  90),
-        "short": ("15m", 14),
-    }
-
     def scan_stream(
         self,
         list_name: str = "sp500_top100",
@@ -75,7 +68,7 @@ class MarketScanner:
           {"type": "done",     "scanned": N, "signals": N, "elapsed": secs}
           {"type": "error",    "message": ...}
         """
-        if timeframe not in self._TF_CONFIG:
+        if timeframe not in TIMEFRAME_CONFIG:
             timeframe = "long"
 
         symbols = self._resolve_symbols(list_name, custom)
@@ -91,7 +84,6 @@ class MarketScanner:
         yield self._event({"type": "start", "total": total, "list": list_name, "timeframe": timeframe})
 
         # Fetch SPY once as the benchmark for relative strength
-        _, spy_days = self._TF_CONFIG[timeframe]
         self._spy_data = self._fetch_bars("SPY", timeframe=timeframe)
         time.sleep(_REQUEST_INTERVAL)
 
@@ -124,12 +116,17 @@ class MarketScanner:
         return list(SYMBOL_LISTS.get(list_name, []))
 
     def _fetch_bars(self, symbol: str, timeframe: str = "long") -> pd.DataFrame:
-        """Fetch bars for a symbol from Alpaca (IEX feed — free tier compatible)."""
-        from datetime import timezone
+        """Fetch bars for a symbol from Alpaca (IEX feed — free tier compatible).
 
-        interval, days = self._TF_CONFIG.get(timeframe, ("1d", 365))
+        Bar interval and lookback days are resolved from TIMEFRAME_CONFIG.
+        """
+        from datetime import timezone
         from alpaca.data.timeframe import TimeFrameUnit
-        tf_obj = {
+
+        cfg      = TIMEFRAME_CONFIG.get(timeframe, TIMEFRAME_CONFIG["long"])
+        interval = cfg["interval"]
+        days     = cfg["days"]
+        tf_obj   = {
             "1d":  TimeFrame.Day,
             "1h":  TimeFrame.Hour,
             "15m": TimeFrame(15, TimeFrameUnit.Minute),

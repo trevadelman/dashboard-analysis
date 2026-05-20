@@ -4,57 +4,109 @@ Compression breakout with RS filter and dynamic exits.
 """
 
 import logging
+import math
 from typing import Any, Dict, Generator, Optional
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 
+# ── Single source of truth for timeframe → data configuration ─────────────────
+#
+# Every component that needs to know what "long", "swing", or "short" means
+# in terms of bar interval and lookback period imports this dict.
+# Never define these mappings locally in bot.py, market_scanner.py, or
+# backtester/engine.py — always read from here.
+#
+# Fields:
+#   interval     — interval string used by bot.get_market_data() and market_scanner
+#   alpaca_tf    — string key for the Alpaca TimeFrame lookup in backtester/engine.py
+#   days         — lookback in calendar days for data fetching
+#   label        — human-readable label for the UI
+TIMEFRAME_CONFIG = {
+    'long':  {'interval': '1d',  'alpaca_tf': 'Day',      'days': 365, 'label': 'Long (Daily)'},
+    'swing': {'interval': '1h',  'alpaca_tf': 'Hour',     'days': 90,  'label': 'Swing (Hourly)'},
+    'short': {'interval': '15m', 'alpaca_tf': 'Minute15', 'days': 30,  'label': 'Short (15-min)'},
+}
+
+
 class SignalHierarchy:
     """
     Four-tier signal hierarchy:
-      Tier 1 — Market Regime   (trend direction + volatility environment)
-      Tier 2 — Setup Quality   (compression + relative strength)
+      Tier 1 — Market Regime   (loose trend direction + volatility guard)
+      Tier 2 — Setup Quality   (compression + relative strength + trigger)
       Tier 3 — AI Confirmation (optional)
       Tier 4 — Risk Management (R:R, stop validity)
+
+    Design principles:
+    - Tier 1 is a MACRO filter — it should reject bad environments, not identify entries.
+      EMA9 is a fast signal and belongs in Tier 2 (trigger), not Tier 1 (regime).
+    - Tier 2 is where alpha lives — compression + RS + breakout confirmation.
+    - Compression is defined by BB width percentile alone (primary squeeze indicator).
+      ATR is used in Tier 1 as a volatility guard, not as a second compression gate.
+    - RS vs SPY is required. If SPY data is unavailable, signal generation fails closed
+      rather than silently degrading the edge.
+    - Local ATR contraction (short-window ratio) supplements BB compression in Tier 2
+      without the long-memory distortion of a 252-bar ATR percentile rank.
     """
 
     # Per-timeframe defaults tuned for each interval.
     TIMEFRAME_DEFAULTS = {
         'long': {
-            'ema_short': 9, 'ema_medium': 21, 'ema_long': 50,
-            'rsi_buy': 55, 'rsi_sell': 45,
-            'rsi_neutral_min': 45, 'rsi_neutral_max': 55,
-            'bb_width_pct_max': 35.0,   # compression threshold (percentile)
-            'atr_pct_rank_max': 45.0,   # ATR percentile compression threshold
-            'rs_min': 0.0,              # RS vs SPY minimum (pct pts)
-            'rvol_min': 1.2,            # minimum relative volume on trigger
-            'atr_multiplier': 2.0, 'min_rr_ratio': 2.0,
-            'price_range_min': 1.0, 'atr_pct_max': 10.0, 'atr_pct_min': 0.5,
+            # ── Tier 1 ──────────────────────────────────────────────────────────
+            # Regime uses ema21/ema50 only — ema9 is a trigger signal, not a regime gate.
+            'ema_medium': 21, 'ema_long': 50,
+            'rsi_regime_min': 45,       # RSI floor for BULLISH regime (daily bars are slower)
+            'atr_pct_max': 10.0,        # ATR as % of price — volatility guard
+            # ── Tier 2 ──────────────────────────────────────────────────────────
+            'bb_width_pct_max': 50.0,   # BB width in bottom 50th percentile = compressed
+            # Local ATR contraction: atr_14 / atr_50 ratio. < 0.85 = contracting.
+            'atr_contraction_max': 0.85,
+            'rs_min': 0.0,              # RS vs SPY minimum (pct pts). Fail closed if NaN.
+            'rvol_min': 1.1,            # minimum RVOL on trigger (daily bars are slower)
+            'rsi_buy': 55,              # RSI trigger threshold (bull)
+            'rsi_sell': 45,             # RSI trigger threshold (bear)
+            'extension_limit': 1.5,     # max distance from EMA9 in ATR units (anti-chase)
+            # ── Tier 4 ──────────────────────────────────────────────────────────
+            'min_rr_ratio': 2.0,
+            # ── Misc ────────────────────────────────────────────────────────────
+            'atr_multiplier': 2.0,
+            'price_range_min': 1.0, 'atr_pct_min': 0.5,
+            'min_price': 1.0, 'min_dollar_volume': 5_000_000,
             'ai_confidence_min': 70,
         },
         'swing': {
-            'ema_short': 9, 'ema_medium': 21, 'ema_long': 50,
-            'rsi_buy': 60, 'rsi_sell': 40,
-            'rsi_neutral_min': 42, 'rsi_neutral_max': 58,
-            'bb_width_pct_max': 40.0,
-            'atr_pct_rank_max': 50.0,
+            'ema_medium': 21, 'ema_long': 50,
+            'rsi_regime_min': 48,
+            'atr_pct_max': 8.0,
+            'bb_width_pct_max': 50.0,
+            'atr_contraction_max': 0.85,
             'rs_min': 0.0,
             'rvol_min': 1.3,
-            'atr_multiplier': 1.5, 'min_rr_ratio': 1.5,
-            'price_range_min': 0.5, 'atr_pct_max': 8.0, 'atr_pct_min': 0.3,
+            'rsi_buy': 58,
+            'rsi_sell': 42,
+            'extension_limit': 1.5,
+            'min_rr_ratio': 1.5,
+            'atr_multiplier': 1.5,
+            'price_range_min': 0.5, 'atr_pct_min': 0.3,
+            'min_price': 1.0, 'min_dollar_volume': 5_000_000,
             'ai_confidence_min': 65,
         },
         'short': {
-            'ema_short': 9, 'ema_medium': 21, 'ema_long': 50,
-            'rsi_buy': 65, 'rsi_sell': 35,
-            'rsi_neutral_min': 40, 'rsi_neutral_max': 60,
-            'bb_width_pct_max': 45.0,
-            'atr_pct_rank_max': 55.0,
+            'ema_medium': 21, 'ema_long': 50,
+            'rsi_regime_min': 50,
+            'atr_pct_max': 6.0,
+            'bb_width_pct_max': 55.0,
+            'atr_contraction_max': 0.90,
             'rs_min': 0.0,
             'rvol_min': 1.5,
-            'atr_multiplier': 1.0, 'min_rr_ratio': 1.2,
-            'price_range_min': 0.2, 'atr_pct_max': 6.0, 'atr_pct_min': 0.2,
+            'rsi_buy': 60,
+            'rsi_sell': 40,
+            'extension_limit': 1.5,
+            'min_rr_ratio': 1.2,
+            'atr_multiplier': 1.0,
+            'price_range_min': 0.2, 'atr_pct_min': 0.2,
+            'min_price': 1.0, 'min_dollar_volume': 5_000_000,
             'ai_confidence_min': 60,
         },
     }
@@ -165,9 +217,14 @@ class SignalHierarchy:
 
     def check_market_regime(self, data: pd.DataFrame):
         """
-        Determine allowed direction and volatility environment.
-        Uses EMA alignment (9/21/50) and RSI to classify regime.
-        Does NOT check for entry conditions here.
+        Loose macro filter — reject bad environments, not identify entries.
+
+        Uses ema21/ema50 alignment (NOT ema9 — that is a trigger signal).
+        EMA9 is fast and frequently crosses during healthy consolidation phases,
+        which is exactly when compression setups form. Including it here would
+        block the best setups.
+
+        Returns: ('BULLISH' | 'BEARISH' | 'NO_TRADE', details_list)
         """
         if data.empty:
             return 'NO_TRADE', ['No data available']
@@ -176,7 +233,6 @@ class SignalHierarchy:
         details = []
         price   = latest['close']
 
-        ema9  = latest.get('ema_9',  price)
         ema21 = latest.get('ema_21', price)
         ema50 = latest.get('ema_50', price)
         rsi   = latest.get('rsi_14', 50)
@@ -191,22 +247,22 @@ class SignalHierarchy:
         if too_volatile:
             return 'NO_TRADE', details
 
-        # EMA alignment
-        bullish_ema = price > ema9 > ema21 > ema50
-        bearish_ema = price < ema9 < ema21 < ema50
+        # Macro trend: price > ema21 > ema50 (bull) or price < ema21 < ema50 (bear)
+        bullish_ema = price > ema21 > ema50
+        bearish_ema = price < ema21 < ema50
 
-        details.append(f"EMA stack: price={price:.2f} | 9={ema9:.2f} | 21={ema21:.2f} | 50={ema50:.2f}")
-        details.append(f"RSI={rsi:.1f}, ROC(10)={roc:.2f}%")
+        details.append(f"EMA stack: price={price:.2f} | 21={ema21:.2f} | 50={ema50:.2f}")
+        details.append(f"RSI={rsi:.1f} (min={self.params['rsi_regime_min']}), ROC(10)={roc:.2f}%")
 
-        if bullish_ema and rsi > 50 and roc > 0:
-            details.append("✅ BULLISH regime — EMA aligned + RSI + positive ROC")
+        if bullish_ema and rsi >= self.params['rsi_regime_min'] and roc > 0:
+            details.append("✅ BULLISH regime — EMA21/50 aligned + RSI + positive ROC")
             return 'BULLISH', details
 
-        if bearish_ema and rsi < 50 and roc < 0:
-            details.append("✅ BEARISH regime — EMA aligned + RSI + negative ROC")
+        if bearish_ema and rsi <= (100 - self.params['rsi_regime_min']) and roc < 0:
+            details.append("✅ BEARISH regime — EMA21/50 aligned + RSI + negative ROC")
             return 'BEARISH', details
 
-        details.append("❌ Regime unclear — EMAs not fully aligned")
+        details.append("❌ Regime unclear — EMA21/50 not aligned or RSI/ROC not confirming")
         return 'NO_TRADE', details
 
     # ── Tier 2: Setup & Trigger ───────────────────────────────────────────────
@@ -214,8 +270,14 @@ class SignalHierarchy:
     def check_setup_and_trigger(self, data: pd.DataFrame, regime: str, symbol: str):
         """
         Two-stage check:
-          Setup  — compression (BB width + ATR percentile) + relative strength
-          Trigger — breakout candle + RVOL expansion
+          Setup   — BB compression + local ATR contraction + RS vs SPY
+          Trigger — EMA9 reclaim + breakout above prior high + RVOL + RSI
+
+        Compression is defined by BB width percentile (primary squeeze indicator).
+        Local ATR contraction (atr_14 / atr_50 ratio) supplements BB without the
+        long-memory distortion of a 252-bar ATR percentile rank.
+
+        RS vs SPY is required. If SPY data is unavailable (NaN), signal fails closed.
 
         Returns (signal_dict | None, details_list)
         """
@@ -223,61 +285,63 @@ class SignalHierarchy:
             return None, ['Skipped — regime is NO_TRADE']
 
         latest  = data.iloc[-1]
-        prev    = data.iloc[-2]
         details = []
 
-        # ── Setup: Compression ───────────────────────────────────────────────
-        bb_pct  = latest.get('bb_width_pct', 50)
-        atr_rnk = latest.get('atr_pct_rank', 50)
-
-        bb_compressed  = bb_pct  <= self.params['bb_width_pct_max']
-        atr_compressed = atr_rnk <= self.params['atr_pct_rank_max']
-
+        # ── Setup: BB Compression ────────────────────────────────────────────
+        bb_pct       = latest.get('bb_width_pct', 50)
+        bb_compressed = bb_pct <= self.params['bb_width_pct_max']
         details.append(f"BB width percentile: {bb_pct:.1f} (max={self.params['bb_width_pct_max']}) → {'✅ COMPRESSED' if bb_compressed else '❌ Expanded'}")
-        details.append(f"ATR percentile rank: {atr_rnk:.1f} (max={self.params['atr_pct_rank_max']}) → {'✅ COMPRESSED' if atr_compressed else '❌ Expanded'}")
 
-        # At least one compression signal required
-        in_compression = bb_compressed or atr_compressed
-        if not in_compression:
-            details.append("❌ No compression detected — not a setup")
+        if not bb_compressed:
+            details.append("❌ No BB compression — not a setup")
             return None, details
 
-        # ── Setup: Relative Strength ─────────────────────────────────────────
-        rs = latest.get('rs_vs_spy_20', float('nan'))
-        import math
-        rs_required = self.params.get('require_rs', True)
-        if math.isnan(rs):
-            rs_ok = not rs_required
-            details.append(f"RS vs SPY: N/A (SPY data unavailable) → {'❌ FAIL (required)' if rs_required else '✅ Skipped (not required)'}")
-        else:
-            rs_ok = rs >= self.params['rs_min']
-            details.append(f"RS vs SPY (20d): {rs:.2f}pp (min={self.params['rs_min']}) → {'✅ Outperforming' if rs_ok else '❌ Underperforming'}")
+        # ── Setup: Local ATR Contraction ─────────────────────────────────────
+        # atr_14 / atr_50 < threshold means recent volatility is contracting
+        # relative to the medium-term baseline. This avoids the long-memory
+        # distortion of a 252-bar ATR percentile rank.
+        atr_14 = latest.get('atr_14', None)
+        atr_50 = data['atr_14'].rolling(50).mean().iloc[-1] if 'atr_14' in data.columns else None
 
+        if atr_14 is not None and atr_50 is not None and atr_50 > 0:
+            atr_ratio = atr_14 / atr_50
+            atr_contracting = atr_ratio <= self.params['atr_contraction_max']
+            details.append(f"ATR contraction ratio: {atr_ratio:.2f} (max={self.params['atr_contraction_max']}) → {'✅ CONTRACTING' if atr_contracting else '⚠️ Elevated'}")
+            # ATR contraction is informational — it supplements BB but does not gate.
+            # The primary compression gate is BB width percentile.
+        else:
+            details.append("ATR contraction: N/A (insufficient data)")
+
+        # ── Setup: Relative Strength vs SPY ──────────────────────────────────
+        # RS is a core alpha component. Fail closed if SPY data unavailable.
+        rs = latest.get('rs_vs_spy_20', float('nan'))
+        if math.isnan(rs):
+            details.append("RS vs SPY: N/A — SPY data unavailable → ❌ FAIL (failing closed to preserve edge)")
+            return None, details
+
+        rs_ok = rs >= self.params['rs_min']
+        details.append(f"RS vs SPY (20d): {rs:.2f}pp (min={self.params['rs_min']}) → {'✅ Outperforming' if rs_ok else '❌ Underperforming'}")
         if not rs_ok:
             details.append("❌ Relative strength too weak — not a setup")
             return None, details
 
-        # ── Setup: Price above rising EMA ────────────────────────────────────
-        ema9  = latest.get('ema_9',  latest['close'])
-        ema21 = latest.get('ema_21', latest['close'])
+        # ── Trigger: EMA9 reclaim ─────────────────────────────────────────────
+        # Price must be on the correct side of EMA9 — this is the short-term
+        # trigger signal, not a regime gate.
+        ema9       = latest.get('ema_9', latest['close'])
         ema9_slope = latest.get('ema9_slope', 0)
+        price      = latest['close']
 
-        above_ema = latest['close'] > ema9 if regime == 'BULLISH' else latest['close'] < ema9
-        ema_rising = ema9_slope > 0 if regime == 'BULLISH' else ema9_slope < 0
+        above_ema9 = price > ema9 if regime == 'BULLISH' else price < ema9
+        details.append(f"Price {'above' if regime == 'BULLISH' else 'below'} EMA9: {price:.2f} vs {ema9:.2f} → {'✅' if above_ema9 else '❌'}")
+        details.append(f"EMA9 slope: {ema9_slope:.3f}% → {'✅ Rising' if ema9_slope > 0 else '❌ Flat/Declining'}")
 
-        details.append(f"Price {'above' if regime == 'BULLISH' else 'below'} EMA9: {latest['close']:.2f} vs {ema9:.2f} → {'✅' if above_ema else '❌'}")
-        details.append(f"EMA9 slope: {ema9_slope:.3f}% → {'✅ Rising' if ema_rising else '❌ Flat/Declining'}")
-
-        if not above_ema:
-            details.append("❌ Price not on correct side of EMA9")
+        if not above_ema9:
+            details.append("❌ Price not on correct side of EMA9 — no trigger")
             return None, details
 
-        # ── Trigger: Explicit breakout/breakdown level ────────────────────────
-        # Require price to have broken above the prior 5-bar high (bull) or
-        # below the prior 5-bar low (bear). This ensures we enter on the
-        # expansion candle, not mid-compression.
-        atr   = latest.get('atr_14', latest['close'] * 0.02)
-        price = latest['close']
+        # ── Trigger: Breakout above prior 5-bar high ──────────────────────────
+        atr = latest.get('atr_14', price * 0.02)
 
         if regime == 'BULLISH':
             breakout_level = data['high'].iloc[-6:-1].max()
@@ -295,8 +359,7 @@ class SignalHierarchy:
                 return None, details
 
         # ── Trigger: Anti-chase extension filter ─────────────────────────────
-        # If price has stretched too far from EMA9, we're chasing the move.
-        extension_limit = self.params.get('extension_limit', 1.5)
+        extension_limit = self.params['extension_limit']
         extension       = abs(price - ema9) / atr if atr > 0 else 0
         extension_ok    = extension <= extension_limit
         details.append(f"Extension from EMA9: {extension:.2f}x ATR (max={extension_limit}) → {'✅ OK' if extension_ok else '❌ CHASING'}")
@@ -321,11 +384,11 @@ class SignalHierarchy:
             return None, details
 
         # ── Liquidity filter ─────────────────────────────────────────────────
-        min_price        = self.params.get('min_price', 5.0)
-        min_dollar_vol   = self.params.get('min_dollar_volume', 5_000_000)
-        avg_dollar_vol   = (data['close'] * data['volume']).rolling(20).mean().iloc[-1]
-        price_ok         = price >= min_price
-        liquidity_ok     = avg_dollar_vol >= min_dollar_vol
+        min_price      = self.params['min_price']
+        min_dollar_vol = self.params['min_dollar_volume']
+        avg_dollar_vol = (data['close'] * data['volume']).rolling(20).mean().iloc[-1]
+        price_ok       = price >= min_price
+        liquidity_ok   = avg_dollar_vol >= min_dollar_vol
         details.append(f"Price: ${price:.2f} (min=${min_price}) → {'✅' if price_ok else '❌'}")
         details.append(f"Avg dollar volume: ${avg_dollar_vol:,.0f} (min=${min_dollar_vol:,.0f}) → {'✅' if liquidity_ok else '❌'}")
         if not price_ok or not liquidity_ok:
@@ -333,10 +396,9 @@ class SignalHierarchy:
             return None, details
 
         # ── All conditions met — build signal ─────────────────────────────────
-        # Entry: limit at the breakout level + small ATR buffer (not current price).
-        # This avoids chasing and gets a structurally meaningful fill price.
+        # Entry: limit at the breakout level + small ATR buffer.
         # Stop: structural invalidation (compression low/high ± 0.25×ATR).
-        # Target: 2R from the limit entry — clean, avoids 1.5R noise zone.
+        # Target: 2R from the limit entry.
         if regime == 'BULLISH':
             limit_entry     = round(breakout_level + atr * 0.10, 2)
             compression_low = data['low'].tail(5).min()
@@ -345,7 +407,7 @@ class SignalHierarchy:
             target_price    = round(limit_entry + risk * 2.0, 2)
             side            = 'buy'
             reason          = (f"Compression breakout above {breakout_level:.2f}: "
-                               f"EMA aligned + BB/ATR compressed + RS positive + RVOL {rvol:.1f}x")
+                               f"EMA21/50 aligned + BB compressed + RS {rs:.1f}pp + RVOL {rvol:.1f}x")
         else:
             limit_entry      = round(breakdown_level - atr * 0.10, 2)
             compression_high = data['high'].tail(5).max()
@@ -354,9 +416,8 @@ class SignalHierarchy:
             target_price     = round(limit_entry - risk * 2.0, 2)
             side             = 'sell'
             reason           = (f"Compression breakdown below {breakdown_level:.2f}: "
-                                f"EMA aligned + BB/ATR compressed + RS negative + RVOL {rvol:.1f}x")
+                                f"EMA21/50 aligned + BB compressed + RS {rs:.1f}pp + RVOL {rvol:.1f}x")
 
-        rr = round(risk * 2.0 / risk, 1) if risk > 0 else 0  # always 2.0 by construction
         details.append(f"✅ All conditions met — {side.upper()} signal generated")
         details.append(f"Limit entry: ${limit_entry} | Stop: ${stop_price} | Target: ${target_price} | R:R 2:1")
         return {

@@ -19,7 +19,7 @@ import time
 from analysis.indicators import TechnicalIndicators
 from analysis.patterns import ChartPatterns
 from ai_strategy import AIStrategyGenerator
-from strategies.momentum import SignalHierarchy
+from strategies.momentum import SignalHierarchy, TIMEFRAME_CONFIG
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -471,10 +471,8 @@ class TradingBot:
         Run analysis across three timeframes (long/swing/short) sequentially,
         yielding SSE-formatted events tagged with their timeframe.
 
-        Timeframe mapping:
-            long  → 1D bars, 1-year lookback
-            swing → 1H bars, 60-day lookback
-            short → 15m bars, 14-day lookback
+        Timeframe mapping is read from TIMEFRAME_CONFIG (single source of truth).
+        Period overrides are applied per-timeframe to keep data volumes reasonable.
 
         After all three complete, yields a 'summary' event with the overall verdict.
 
@@ -483,10 +481,12 @@ class TradingBot:
         """
         import json as _json
 
+        # Period overrides per timeframe — keep data volumes reasonable for live analysis.
+        # Interval and bar type come from TIMEFRAME_CONFIG; only the lookback window differs.
+        period_override = {'long': '1y', 'swing': '3mo', 'short': '1mo'}
         timeframes = [
-            ('long',  '1d',  '1y'),
-            ('swing', '1h',  '3mo'),
-            ('short', '15m', '1mo'),
+            (tf_name, TIMEFRAME_CONFIG[tf_name]['interval'], period_override[tf_name])
+            for tf_name in ('long', 'swing', 'short')
         ]
 
         ai_gen = self.ai if use_ai_confirmation else None

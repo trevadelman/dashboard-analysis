@@ -464,6 +464,33 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
             logger.error(f"Error executing trade: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    @app.post("/api/backtest")
+    async def run_backtest(request: Request, _=Depends(login_required)):
+        """
+        Run a walk-forward backtest for a single symbol.
+
+        Body: { symbol, timeframe, period }
+        Returns the full result dict from BacktestEngine.run().
+        """
+        if not bot._require_api():
+            return JSONResponse({"error": "No Alpaca credentials — add a profile first"}, status_code=400)
+        try:
+            from backtester.engine import BacktestEngine
+            data = await request.json()
+            symbol    = data.get("symbol", "SPY").upper().strip()
+            timeframe = data.get("timeframe", "long")
+            period    = data.get("period", "1y")
+            engine = BacktestEngine(bot.data_client)
+            result = engine.run(symbol=symbol, timeframe=timeframe, period=period)
+            return result
+        except Exception as e:
+            logger.error(f"Backtest error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/backtest", response_class=HTMLResponse)
+    async def backtest_page(request: Request, _=Depends(login_required)):
+        return templates.TemplateResponse(request, "backtest.html", {"active_page": "backtest"})
+
     @app.get("/api/scan/stream")
     async def scan_stream(
         request: Request,
