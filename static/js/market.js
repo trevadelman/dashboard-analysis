@@ -334,9 +334,9 @@ function buildReportCard(d, tf) {
                         const pct = d.total ? Math.round(cnt / d.total * 100) : 0;
                         const barCls = g === 'A' ? 'progress-success' : g === 'B' ? 'progress-info' : g === 'C' ? 'progress-warning' : 'progress-error';
                         return `<div class="flex items-center gap-2 text-xs">
-                            <span class="w-4 font-bold">${g}</span>
-                            <progress class="progress ${barCls} flex-1 h-2" value="${pct}" max="100"></progress>
-                            <span class="w-12 text-right text-base-content/60">${cnt} (${pct}%)</span>
+                            <span class="w-4 shrink-0 font-bold">${g}</span>
+                            <progress class="progress ${barCls} flex-1 h-2 min-w-0" value="${pct}" max="100"></progress>
+                            <span class="w-20 shrink-0 text-right text-base-content/60 whitespace-nowrap">${cnt} (${pct}%)</span>
                         </div>`;
                     }).join('')}
                 </div>
@@ -345,13 +345,13 @@ function buildReportCard(d, tf) {
             <!-- Top failure gates -->
             <div class="bg-base-200 rounded-lg p-3">
                 <h4 class="text-xs font-semibold text-base-content/50 uppercase mb-2">Why Signals Aren't Triggering</h4>
-                ${fcSorted.length ? `<div class="space-y-1">
+                ${fcSorted.length ? `<div class="space-y-1.5">
                     ${fcSorted.map(([gate, cnt]) => {
                         const pct = d.total ? Math.round(cnt / d.total * 100) : 0;
                         return `<div class="flex items-center gap-2 text-xs">
-                            <span class="flex-1 truncate text-base-content/70">${gate}</span>
-                            <progress class="progress progress-ghost w-20 h-2" value="${pct}" max="100"></progress>
-                            <span class="w-8 text-right text-base-content/60">${cnt}</span>
+                            <span class="w-32 shrink-0 text-base-content/70">${gate}</span>
+                            <progress class="progress progress-ghost flex-1 h-2" value="${pct}" max="100"></progress>
+                            <span class="w-10 text-right text-base-content/60 shrink-0">${cnt}</span>
                         </div>`;
                     }).join('')}
                 </div>` : '<p class="text-xs text-base-content/40">No failure data.</p>'}
