@@ -468,11 +468,12 @@ class TradingBot:
 
     def analyze_symbol_multi_timeframe_stream(self, symbol, use_ai_confirmation=True):
         """
-        Run analysis across three timeframes (long/swing/short) sequentially,
-        yielding SSE-formatted events tagged with their timeframe.
+        Run analysis across three timeframes (long/swing/short), yielding SSE-formatted
+        events tagged with their timeframe.
 
-        Timeframe mapping is read from TIMEFRAME_CONFIG (single source of truth).
-        Period overrides are applied per-timeframe to keep data volumes reasonable.
+        Bar data for all three timeframes (plus SPY for each) is fetched in parallel
+        using a thread pool before any strategy logic runs, cutting wall-clock fetch
+        time from 3× single-timeframe to roughly 1× (the slowest fetch).
 
         After all three complete, yields a 'summary' event with the overall verdict.
 
@@ -480,20 +481,44 @@ class TradingBot:
             str: SSE-formatted event strings
         """
         import json as _json
+        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         # Period overrides per timeframe — keep data volumes reasonable for live analysis.
-        # Interval and bar type come from TIMEFRAME_CONFIG; only the lookback window differs.
         period_override = {'long': '1y', 'swing': '3mo', 'short': '1mo'}
-        timeframes = [
+        timeframe_specs = [
             (tf_name, TIMEFRAME_CONFIG[tf_name]['interval'], period_override[tf_name])
             for tf_name in ('long', 'swing', 'short')
         ]
 
+        # ── Parallel data fetch ───────────────────────────────────────────────
+        # Fetch symbol bars and SPY bars for each timeframe concurrently.
+        # Keys: (tf_name, 'symbol') and (tf_name, 'spy')
+        fetch_tasks = {}
+        for tf_name, interval, period in timeframe_specs:
+            fetch_tasks[(tf_name, 'symbol')] = (symbol, period, interval)
+            fetch_tasks[(tf_name, 'spy')]    = ('SPY',  period, interval)
+
+        fetched = {}
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            future_to_key = {
+                pool.submit(self.get_market_data, sym, period, interval): key
+                for key, (sym, period, interval) in fetch_tasks.items()
+            }
+            for future in as_completed(future_to_key):
+                key = future_to_key[future]
+                try:
+                    fetched[key] = future.result()
+                except Exception as e:
+                    logger.warning(f"Parallel fetch failed for {key}: {e}")
+                    fetched[key] = pd.DataFrame()
+
+        # ── Sequential strategy evaluation ────────────────────────────────────
         ai_gen = self.ai if use_ai_confirmation else None
         results = {}
 
-        for tf_name, interval, period in timeframes:
-            data = self.get_market_data(symbol, period=period, interval=interval)
+        for tf_name, interval, period in timeframe_specs:
+            data     = fetched.get((tf_name, 'symbol'), pd.DataFrame())
+            spy_data = fetched.get((tf_name, 'spy'),    pd.DataFrame())
 
             if data.empty:
                 payload = _json.dumps({
@@ -505,10 +530,15 @@ class TradingBot:
                 results[tf_name] = None
                 continue
 
-            strategy = SignalHierarchy(
-                ai_generator=ai_gen,
-                timeframe=tf_name,
-            )
+            # Inject SPY data into the bars so RS vs SPY is computed correctly.
+            # TechnicalIndicators.calculate_all accepts spy_data as a kwarg.
+            from analysis.indicators import TechnicalIndicators
+            try:
+                data = TechnicalIndicators.calculate_all(data, spy_data=spy_data)
+            except Exception as e:
+                logger.warning(f"Indicator recalc failed for {symbol} [{tf_name}]: {e}")
+
+            strategy = SignalHierarchy(ai_generator=ai_gen, timeframe=tf_name)
 
             tf_result = None
             for event in strategy.stream_signal(data, symbol):

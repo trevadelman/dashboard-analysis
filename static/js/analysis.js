@@ -121,10 +121,10 @@ function buildTimeframeRow(tf) {
                 <span id="tf-badge-${tf}" class="badge badge-ghost badge-sm">
                     <span class="loading loading-spinner loading-xs"></span>
                 </span>
-                <i id="tf-chevron-${tf}" class="bi bi-chevron-down text-xs text-base-content/40 transition-transform"></i>
+                <i id="tf-chevron-${tf}" class="bi bi-chevron-down text-xs text-base-content/40 transition-transform rotate-180"></i>
             </div>
         </div>
-        <div id="tf-panel-${tf}" class="hidden pl-2 pr-1 pb-2">
+        <div id="tf-panel-${tf}" class="pl-2 pr-1 pb-2">
             <div id="tf-tiers-${tf}" class="space-y-1 mt-2"></div>
             <div id="tf-commentary-${tf}"></div>
         </div>`;
