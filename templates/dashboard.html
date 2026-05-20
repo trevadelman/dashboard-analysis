@@ -4,10 +4,9 @@
 
 {% block head %}
 <style>
-    :root { --sidebar-width: 300px; --right-sidebar-width: 320px; }
-    .sidebar       { width: var(--sidebar-width); position: fixed; top: 64px; bottom: 0; left: 0; overflow-y: auto; z-index: 40; }
-    .right-sidebar { width: var(--right-sidebar-width); position: fixed; top: 64px; bottom: 0; right: 0; overflow-y: auto; z-index: 40; }
-    .main-content  { margin-left: var(--sidebar-width); margin-right: var(--right-sidebar-width); padding: 1.5rem; }
+    :root { --sidebar-width: 300px; }
+    .sidebar      { width: var(--sidebar-width); position: fixed; top: 64px; bottom: 0; left: 0; overflow-y: auto; z-index: 40; }
+    .main-content { margin-left: var(--sidebar-width); padding: 1.5rem; }
     #chart-container { height: 500px; width: 100%; position: relative; }
     #loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 2000; }
     @keyframes slideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
@@ -31,9 +30,11 @@
 {% endblock %}
 
 {% block content %}
-    <!-- Left Sidebar: Account & Strategy Settings -->
-    <div class="sidebar bg-base-200 p-4">
-        <div class="card bg-base-100 shadow-xl mb-4">
+    <!-- Left Sidebar: Account Summary + Positions + Trades -->
+    <div class="sidebar bg-base-200 p-4 space-y-4">
+
+        <!-- Account Summary -->
+        <div class="card bg-base-100 shadow-xl">
             <div class="card-body p-4">
                 <h2 class="card-title text-sm">Account Summary</h2>
                 <div class="space-y-3">
@@ -55,49 +56,32 @@
             </div>
         </div>
 
+        <!-- Positions -->
         <div class="card bg-base-100 shadow-xl">
             <div class="card-body p-4">
-                <h2 class="card-title text-sm mb-2">Strategy Settings</h2>
-
-                <!-- Momentum Presets -->
-                <div class="mb-3">
-                    <div class="text-xs text-base-content/60 mb-2 font-semibold uppercase">Quick Presets</div>
-                    <div class="flex flex-wrap gap-1" id="momentum_preset_buttons">
-                        <button class="btn btn-outline btn-xs momentum-preset-btn" data-preset="breakout"    onclick="applyMomentumPreset('breakout')">🚀 Breakout</button>
-                        <button class="btn btn-outline btn-xs momentum-preset-btn" data-preset="mean_revert" onclick="applyMomentumPreset('mean_revert')">↩️ Mean Revert</button>
-                        <button class="btn btn-outline btn-xs momentum-preset-btn" data-preset="trend"       onclick="applyMomentumPreset('trend')">📈 Trend Follow</button>
-                        <button class="btn btn-outline btn-xs momentum-preset-btn" data-preset="scalp"       onclick="applyMomentumPreset('scalp')">⚡ Scalp</button>
-                    </div>
-                    <div id="momentum_preset_desc" class="text-xs text-base-content/60 mt-1 italic"></div>
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="card-title text-sm">Positions</h2>
+                    <div class="badge badge-primary" id="positions-count">0</div>
+                </div>
+                <div id="positions-list">
+                    <div class="text-center text-base-content/60 text-sm py-3">No open positions</div>
                 </div>
 
-                <!-- Momentum Settings -->
-                <div class="collapse collapse-arrow bg-base-200 mb-2">
+                <!-- Recent Trades — collapsed by default -->
+                <div class="collapse collapse-arrow bg-base-200 mt-4 -mx-1">
                     <input type="checkbox" />
-                    <div class="collapse-title text-sm font-medium">
-                        <i class="bi bi-speedometer2"></i> Momentum (RSI)
+                    <div class="collapse-title text-xs font-semibold text-base-content/60 uppercase py-2 min-h-0">
+                        Recent Trades
                     </div>
-                    <div class="collapse-content">
-                        <div id="settings-momentum" class="space-y-3 pt-2"></div>
-                    </div>
-                </div>
-
-                <!-- Risk Settings -->
-                <div class="collapse collapse-arrow bg-base-200 mb-2">
-                    <input type="checkbox" />
-                    <div class="collapse-title text-sm font-medium">
-                        <i class="bi bi-shield-check"></i> Risk Management
-                    </div>
-                    <div class="collapse-content">
-                        <div id="settings-risk" class="space-y-3 pt-2"></div>
+                    <div class="collapse-content px-0">
+                        <div id="trades-list" class="pt-1">
+                            <div class="text-center text-base-content/60 text-sm py-3">No trade history</div>
+                        </div>
                     </div>
                 </div>
-
-                <button class="btn btn-primary w-full mt-3" onclick="updateConfig()">
-                    Save Configuration
-                </button>
             </div>
         </div>
+
     </div>
 
     <!-- Main Content: Chart & Analysis -->
@@ -132,29 +116,6 @@
         </div>
     </div>
 
-    <!-- Right Sidebar: Positions & Trades -->
-    <div class="right-sidebar bg-base-200 p-4">
-        <div class="card bg-base-100 shadow-xl mb-4">
-            <div class="card-body p-4">
-                <div class="flex justify-between items-center mb-3">
-                    <h2 class="card-title text-sm">Positions</h2>
-                    <div class="badge badge-primary" id="positions-count">0</div>
-                </div>
-                <div id="positions-list">
-                    <div class="text-center text-base-content/60 text-sm py-3">No open positions</div>
-                </div>
-            </div>
-        </div>
-
-        <div class="card bg-base-100 shadow-xl">
-            <div class="card-body p-4">
-                <h2 class="card-title text-sm mb-3">Recent Trades</h2>
-                <div id="trades-list">
-                    <div class="text-center text-base-content/60 text-sm py-3">No trade history</div>
-                </div>
-            </div>
-        </div>
-    </div>
 {% endblock %}
 
 {% block scripts %}
