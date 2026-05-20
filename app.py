@@ -610,13 +610,17 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
     @app.get("/api/market/pulse")
     async def get_market_pulse(
         request: Request,
-        timeframe: str = "long",
+        timeframe: str = "all",
         _=Depends(login_required),
     ):
         """
         Compute market pulse statistics from the scan cache.
 
-        Returns overall market stats + per-sector breakdown.
+        When timeframe="all" (default), returns stats for all three timeframes
+        plus cross-timeframe signals and top setups.
+        When timeframe is "long", "swing", or "short", returns stats for that
+        timeframe only (backward-compatible).
+
         No Alpaca API calls — reads only from data/scan_cache.json.
         """
         import json as _json
@@ -630,15 +634,26 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
             with open(cache_path, "r") as f:
                 cache = _json.load(f)
 
-            tf_data = cache.get(timeframe, {})
-            if not isinstance(tf_data, dict) or not tf_data:
-                return JSONResponse(
-                    {"error": f"No cached results for timeframe '{timeframe}' — run a scan first"},
-                    status_code=404,
-                )
-
-            results = list(tf_data.values())
             last_updated = cache.get("last_updated", "")
+
+            # If a specific timeframe is requested, use the old single-TF path
+            if timeframe in ("long", "swing", "short"):
+                tf_data = cache.get(timeframe, {})
+                if not isinstance(tf_data, dict) or not tf_data:
+                    return JSONResponse(
+                        {"error": f"No cached results for timeframe '{timeframe}' — run a scan first"},
+                        status_code=404,
+                    )
+                results = list(tf_data.values())
+            else:
+                # "all" — aggregate across all available timeframes
+                results = []
+                for tf in ("long", "swing", "short"):
+                    tf_data = cache.get(tf, {})
+                    if isinstance(tf_data, dict):
+                        results.extend(tf_data.values())
+                if not results:
+                    return JSONResponse({"error": "No scan cache — run a scan first"}, status_code=404)
 
             def _compute_stats(rows):
                 if not rows:
@@ -912,6 +927,101 @@ Rules: Use markdown headers. Be direct. Use actual numbers from the data. No dis
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.get("/api/market/overview")
+    async def get_market_overview(request: Request, _=Depends(login_required)):
+        """
+        Return a cross-timeframe overview for the Market Pulse page.
+
+        Reads the scan cache and returns:
+          - Per-timeframe stats (stance, regime split, avg score, signal count, setup count)
+          - Active signals across all timeframes (BUY/SELL, sorted by score desc)
+          - Top 10 setups per timeframe (highest score, regardless of signal)
+        """
+        import json as _json
+
+        cache_path = os.path.join("data", "scan_cache.json")
+        if not os.path.exists(cache_path):
+            return JSONResponse({"error": "No scan cache — run a scan first"}, status_code=404)
+
+        try:
+            with open(cache_path, "r") as f:
+                cache = _json.load(f)
+
+            last_updated = cache.get("last_updated", "")
+            tf_summaries = {}
+            all_signals  = []
+            top_setups   = {}
+
+            for tf in ("long", "swing", "short"):
+                tf_data = cache.get(tf, {})
+                if not isinstance(tf_data, dict) or not tf_data:
+                    continue
+
+                rows = list(tf_data.values())
+                total    = len(rows)
+                bullish  = sum(1 for r in rows if r.get("regime") == "BULLISH")
+                bearish  = sum(1 for r in rows if r.get("regime") == "BEARISH")
+                signals  = [r for r in rows if r.get("signal") in ("BUY", "SELL")]
+                setups   = [
+                    r for r in rows
+                    if r.get("signal") == "NONE"
+                    and r.get("tier_reached", 1) >= 2
+                    and (r.get("bb_width_pct") or 100) <= 50
+                    and (r.get("rs_vs_spy") or -999) >= 0
+                ]
+                scores   = [r["score"] for r in rows if r.get("score") is not None]
+                avg_score = round(sum(scores) / len(scores), 1) if scores else 0
+
+                signal_rate  = len(signals) / total if total else 0
+                bullish_rate = bullish / total if total else 0
+                high_score_pct = sum(1 for s in scores if s >= 60) / total if total else 0
+
+                if signal_rate >= 0.15 and bullish_rate >= 0.6:
+                    stance = "RISK ON"
+                elif signal_rate >= 0.05 and bullish_rate >= 0.5:
+                    stance = "SELECTIVE"
+                elif bullish_rate < 0.3:
+                    stance = "RISK OFF"
+                elif high_score_pct >= 0.20 and bullish_rate >= 0.5:
+                    stance = "COILING"
+                else:
+                    stance = "WAIT"
+
+                tf_summaries[tf] = {
+                    "total":          total,
+                    "bullish":        bullish,
+                    "bearish":        bearish,
+                    "bullish_pct":    round(bullish / total * 100, 1) if total else 0,
+                    "bearish_pct":    round(bearish / total * 100, 1) if total else 0,
+                    "signals":        len(signals),
+                    "signal_rate":    round(signal_rate * 100, 1),
+                    "setups_forming": len(setups),
+                    "avg_score":      avg_score,
+                    "stance":         stance,
+                }
+
+                # Collect signals for the cross-timeframe signals table
+                for r in signals:
+                    all_signals.append({**r, "timeframe": tf})
+
+                # Top 10 setups by score for this timeframe
+                sorted_rows = sorted(rows, key=lambda r: r.get("score", 0), reverse=True)
+                top_setups[tf] = sorted_rows[:10]
+
+            # Sort all signals by score descending
+            all_signals.sort(key=lambda r: r.get("score", 0), reverse=True)
+
+            return {
+                "last_updated": last_updated,
+                "timeframes":   tf_summaries,
+                "signals":      all_signals,
+                "top_setups":   top_setups,
+            }
+
+        except Exception as e:
+            logger.error(f"Market overview error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.get("/api/scan/sectors")
     async def get_sectors(request: Request, _=Depends(login_required)):

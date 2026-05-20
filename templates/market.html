@@ -3,23 +3,21 @@
 {% block title %}Market Pulse — Alpaca Trading{% endblock %}
 
 {% block head %}
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
-    .stance-risk-on  { @apply text-success; }
-    .stance-selective { @apply text-warning; }
-    .stance-wait     { @apply text-info; }
-    .stance-risk-off { @apply text-error; }
-    #ai-commentary { line-height: 1.7; }
-    #ai-commentary h1, #ai-commentary h2, #ai-commentary h3 { font-weight: 600; margin-top: 0.75rem; margin-bottom: 0.25rem; }
-    #ai-commentary p { margin-bottom: 0.5rem; }
-    #ai-commentary ul, #ai-commentary ol { padding-left: 1.25rem; margin-bottom: 0.5rem; }
-    #ai-commentary li { margin-bottom: 0.2rem; }
-    #ai-commentary strong { font-weight: 600; }
+    .stance-RISK-ON   { @apply badge-success; }
+    .stance-SELECTIVE { @apply badge-warning; }
+    .stance-COILING   { @apply badge-info; }
+    .stance-WAIT      { @apply badge-ghost; }
+    .stance-RISK-OFF  { @apply badge-error; }
+    .regime-bar-bull  { background: oklch(var(--su)); }
+    .regime-bar-bear  { background: oklch(var(--er)); }
+    .regime-bar-none  { background: oklch(var(--b3)); }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="page-content-wide">
+<div class="page-content-wide min-h-screen bg-base-200">
+<div class="max-w-screen-2xl mx-auto">
 
     <!-- Header -->
     <div class="flex items-center justify-between mb-6">
@@ -28,163 +26,137 @@
                 <i class="bi bi-activity text-primary"></i>
                 Market Pulse
             </h1>
-            <p class="text-sm text-base-content/60 mt-1">
-                Aggregate analysis of the scan cache — no live API calls required.
+            <p class="text-sm text-base-content/60 mt-1" id="pulse-last-updated">
+                Loading from scan cache…
             </p>
         </div>
-        <div class="flex items-center gap-3">
-            <span id="pulse-cache-age" class="text-xs text-base-content/40"></span>
-            <!-- Timeframe selector -->
-            <div class="join">
-                <input type="radio" name="pulse-timeframe" value="long"  class="join-item btn btn-sm" aria-label="Long"  checked onchange="loadPulse()" />
-                <input type="radio" name="pulse-timeframe" value="swing" class="join-item btn btn-sm" aria-label="Swing" onchange="loadPulse()" />
-                <input type="radio" name="pulse-timeframe" value="short" class="join-item btn btn-sm" aria-label="Short" onchange="loadPulse()" />
-            </div>
-            <button class="btn btn-ghost btn-sm gap-1" onclick="loadPulse()">
-                <i class="bi bi-arrow-clockwise"></i> Refresh
-            </button>
+        <div class="flex items-center gap-2">
+            <a href="/scanner" class="btn btn-ghost btn-sm gap-1">
+                <i class="bi bi-funnel"></i> Run Scan
+            </a>
         </div>
     </div>
 
-    <!-- Error state -->
-    <div id="pulse-error" class="hidden">
+    <!-- No cache state -->
+    <div id="no-cache-msg" class="hidden">
         <div class="alert alert-warning">
-            <i class="bi bi-exclamation-triangle"></i>
-            <span id="pulse-error-msg">No scan cache found. Run a scan in the Market Scanner first.</span>
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <div>
+                <strong>No scan cache found.</strong>
+                Run a scan from the <a href="/scanner" class="link">Market Scanner</a> to populate the Market Pulse.
+            </div>
         </div>
     </div>
 
-    <!-- Main content (hidden until loaded) -->
+    <!-- Main content (hidden until data loads) -->
     <div id="pulse-content" class="hidden space-y-6">
 
-        <!-- Stance + Stats row -->
-        <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
-
-            <!-- Stance card (wider) -->
-            <div class="card bg-base-100 shadow-xl lg:col-span-2">
-                <div class="card-body">
-                    <div class="flex items-center gap-3 mb-2">
-                        <div id="stance-badge" class="badge badge-lg text-base font-bold px-4 py-3"></div>
-                        <span class="text-xs text-base-content/50">Market Stance</span>
-                    </div>
-                    <p id="stance-summary" class="text-sm text-base-content/70 leading-relaxed"></p>
-                </div>
-            </div>
-
-            <!-- Signal Rate -->
-            <div class="card bg-base-100 shadow-xl">
-                <div class="card-body items-center text-center">
-                    <div class="text-3xl font-bold text-primary" id="stat-signal-rate">—</div>
-                    <div class="text-xs text-base-content/50 mt-1">Signals Triggered</div>
-                    <div class="text-xs text-base-content/40" id="stat-signal-count"></div>
-                </div>
-            </div>
-
-            <!-- Setups forming -->
-            <div class="card bg-base-100 shadow-xl">
-                <div class="card-body items-center text-center">
-                    <div class="text-3xl font-bold text-warning" id="stat-setup-rate">—</div>
-                    <div class="text-xs text-base-content/50 mt-1">Setups Forming</div>
-                    <div class="text-xs text-base-content/40" id="stat-setup-count"></div>
-                </div>
-            </div>
-
-            <!-- Regime split -->
-            <div class="card bg-base-100 shadow-xl">
-                <div class="card-body items-center text-center">
-                    <div class="text-2xl font-bold text-success" id="stat-bullish-pct">—</div>
-                    <div class="text-xs text-base-content/50 mt-1">Bullish</div>
-                    <div class="text-xs text-error font-semibold" id="stat-bearish-pct"></div>
-                </div>
-            </div>
-
-            <!-- Avg score -->
-            <div class="card bg-base-100 shadow-xl">
-                <div class="card-body items-center text-center">
-                    <div class="text-3xl font-bold" id="stat-avg-score">—</div>
-                    <div class="text-xs text-base-content/50 mt-1">Avg Score</div>
-                    <div class="text-xs text-base-content/40">out of 100</div>
-                </div>
-            </div>
-
+        <!-- ── Section 1: Cross-Timeframe Overview ── -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4" id="tf-overview-cards">
+            <!-- Populated by JS -->
         </div>
 
-        <!-- Failure gate + Grade distribution -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-            <!-- Top failure gate -->
-            <div class="card bg-base-100 shadow-xl">
-                <div class="card-body">
-                    <h3 class="card-title text-sm font-semibold mb-3">
-                        <i class="bi bi-x-circle text-error"></i> Top Signal Blockers
-                    </h3>
-                    <div id="failure-bars" class="space-y-2"></div>
-                </div>
-            </div>
-
-            <!-- Grade distribution -->
-            <div class="card bg-base-100 shadow-xl">
-                <div class="card-body">
-                    <h3 class="card-title text-sm font-semibold mb-3">
-                        <i class="bi bi-bar-chart text-primary"></i> Grade Distribution
-                    </h3>
-                    <div id="grade-bars" class="space-y-2"></div>
-                </div>
-            </div>
-
-        </div>
-
-        <!-- AI Commentary -->
+        <!-- ── Section 2: Active Signals ── -->
         <div class="card bg-base-100 shadow-xl">
-            <div class="card-body">
-                <div class="flex items-center justify-between mb-3">
-                    <h3 class="card-title text-sm font-semibold">
-                        <i class="bi bi-cpu text-primary"></i> AI Market Commentary
-                    </h3>
-                    <button id="ai-regen-btn" class="btn btn-ghost btn-xs gap-1" onclick="streamAI()">
-                        <i class="bi bi-arrow-clockwise"></i> Regenerate
+            <div class="card-body p-4">
+                <h2 class="text-sm font-semibold uppercase text-base-content/60 mb-3 flex items-center gap-2">
+                    <i class="bi bi-lightning-fill text-warning"></i>
+                    Active Signals
+                    <span id="signals-count-badge" class="badge badge-warning badge-sm">0</span>
+                </h2>
+                <div id="signals-table-wrap">
+                    <p class="text-sm text-base-content/40 text-center py-4">No active signals across any timeframe.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── Section 3: Top Setups by Timeframe ── -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body p-4">
+                <h2 class="text-sm font-semibold uppercase text-base-content/60 mb-3 flex items-center gap-2">
+                    <i class="bi bi-star-fill text-primary"></i>
+                    Top Setups by Timeframe
+                    <span class="text-xs font-normal text-base-content/40">(highest score, signal or not)</span>
+                </h2>
+                <div class="tabs tabs-boxed mb-4" id="setups-tabs"
+                     style="background: oklch(var(--b2)); --tab-color: oklch(var(--bc) / 0.5); --tab-bg: oklch(var(--b3)); --tab-border-color: oklch(var(--b3));">
+                    <button class="tab tab-active !bg-base-300 !text-base-content" onclick="showSetupTab('long', this)">
+                        <i class="bi bi-calendar3 mr-1 opacity-50"></i> Long
+                    </button>
+                    <button class="tab !text-base-content/50" onclick="showSetupTab('swing', this)">
+                        <i class="bi bi-bar-chart-line mr-1 opacity-50"></i> Swing
+                    </button>
+                    <button class="tab !text-base-content/50" onclick="showSetupTab('short', this)">
+                        <i class="bi bi-lightning mr-1 opacity-50"></i> Short
                     </button>
                 </div>
-                <div id="ai-loading" class="flex items-center gap-2 text-sm text-base-content/50">
-                    <span class="loading loading-dots loading-sm"></span> Generating commentary…
+                <div id="setups-table-wrap">
+                    <p class="text-sm text-base-content/40 text-center py-4">Loading…</p>
                 </div>
-                <div id="ai-commentary" class="text-sm text-base-content/80 hidden"></div>
-                <div id="ai-error" class="text-sm text-error hidden"></div>
             </div>
         </div>
 
-        <!-- Sector breakdown -->
+        <!-- ── Section 4: Timeframe Report Cards (collapsed) ── -->
         <div class="card bg-base-100 shadow-xl">
-            <div class="card-body p-0">
-                <div class="p-4 pb-0">
-                    <h3 class="font-semibold text-sm flex items-center gap-2">
-                        <i class="bi bi-grid-3x3-gap text-primary"></i> Sector Breakdown
-                    </h3>
-                </div>
-                <div class="overflow-x-auto mt-3">
-                    <table class="table table-sm table-zebra w-full">
-                        <thead>
-                            <tr class="bg-base-200">
-                                <th class="text-xs">Sector</th>
-                                <th class="text-xs text-right">Symbols</th>
-                                <th class="text-xs text-right">Avg Score</th>
-                                <th class="text-xs text-right">Signals</th>
-                                <th class="text-xs text-right">Setups</th>
-                                <th class="text-xs text-right">Bullish %</th>
-                                <th class="text-xs">Top Failure</th>
-                            </tr>
-                        </thead>
-                        <tbody id="sector-table-body">
-                            <tr><td colspan="7" class="text-center text-base-content/40 py-6 text-sm">Loading…</td></tr>
-                        </tbody>
-                    </table>
+            <div class="card-body p-4">
+                <button class="flex items-center justify-between w-full text-left"
+                        onclick="toggleSection('report-cards-body', 'report-cards-chevron')">
+                    <h2 class="text-sm font-semibold uppercase text-base-content/60 flex items-center gap-2">
+                        <i class="bi bi-bar-chart-fill text-secondary"></i>
+                        Timeframe Report Cards
+                    </h2>
+                    <i id="report-cards-chevron" class="bi bi-chevron-down text-base-content/40 transition-transform"></i>
+                </button>
+                <div id="report-cards-body" class="hidden mt-4 space-y-4">
+                    <!-- Long -->
+                    <div>
+                        <h3 class="text-xs font-semibold text-base-content/50 uppercase mb-2 flex items-center gap-1">
+                            <i class="bi bi-calendar3"></i> Long-term (Daily)
+                        </h3>
+                        <div id="report-long" class="space-y-2"></div>
+                    </div>
+                    <div class="divider my-1"></div>
+                    <!-- Swing -->
+                    <div>
+                        <h3 class="text-xs font-semibold text-base-content/50 uppercase mb-2 flex items-center gap-1">
+                            <i class="bi bi-bar-chart-line"></i> Swing (Hourly)
+                        </h3>
+                        <div id="report-swing" class="space-y-2"></div>
+                    </div>
+                    <div class="divider my-1"></div>
+                    <!-- Short -->
+                    <div>
+                        <h3 class="text-xs font-semibold text-base-content/50 uppercase mb-2 flex items-center gap-1">
+                            <i class="bi bi-lightning"></i> Short-term (15-min)
+                        </h3>
+                        <div id="report-short" class="space-y-2"></div>
+                    </div>
                 </div>
             </div>
         </div>
 
-    </div>
+        <!-- ── Section 5: AI Commentary (collapsed, triggered on expand) ── -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body p-4">
+                <button class="flex items-center justify-between w-full text-left"
+                        onclick="toggleAiCommentary()">
+                    <h2 class="text-sm font-semibold uppercase text-base-content/60 flex items-center gap-2">
+                        <i class="bi bi-cpu-fill text-primary"></i>
+                        AI Market Commentary
+                        <span class="badge badge-ghost badge-sm" id="ai-status-badge">Click to load</span>
+                    </h2>
+                    <i id="ai-chevron" class="bi bi-chevron-down text-base-content/40 transition-transform"></i>
+                </button>
+                <div id="ai-commentary-body" class="hidden mt-4">
+                    <div id="ai-commentary-text" class="prose prose-sm max-w-none text-base-content/80 leading-relaxed"></div>
+                </div>
+            </div>
+        </div>
 
-</div>
+    </div><!-- /pulse-content -->
+
+</div><!-- /max-w-screen-2xl -->
+</div><!-- /page-content-wide -->
 {% endblock %}
 
 {% block scripts %}
