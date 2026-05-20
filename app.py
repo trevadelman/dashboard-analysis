@@ -988,6 +988,48 @@ Rules: Use markdown headers. Be direct. Use actual numbers from the data. No dis
                 else:
                     stance = "WAIT"
 
+                # Grade distribution
+                grade_dist = {"A": 0, "B": 0, "C": 0, "D": 0}
+                for r in rows:
+                    sc = r.get("score")
+                    if sc is None:
+                        continue
+                    if sc >= 80:
+                        grade_dist["A"] += 1
+                    elif sc >= 60:
+                        grade_dist["B"] += 1
+                    elif sc >= 40:
+                        grade_dist["C"] += 1
+                    else:
+                        grade_dist["D"] += 1
+
+                # Failure gate counts
+                failure_counts = {}
+                for r in rows:
+                    if r.get("signal") != "NONE":
+                        continue
+                    if r.get("tier_reached", 1) < 2:
+                        failure_counts["Regime"] = failure_counts.get("Regime", 0) + 1
+                        continue
+                    bb   = r.get("bb_width_pct")
+                    rs   = r.get("rs_vs_spy")
+                    rvol = r.get("rvol")
+                    reason_text = (r.get("tier2_reason") or "").lower()
+                    if bb is not None and bb > 50:
+                        failure_counts["BB Compression"] = failure_counts.get("BB Compression", 0) + 1
+                    elif rs is not None and rs < 0:
+                        failure_counts["Relative Strength"] = failure_counts.get("Relative Strength", 0) + 1
+                    elif "breakout" in reason_text or "broke" in reason_text or "range" in reason_text:
+                        failure_counts["Breakout"] = failure_counts.get("Breakout", 0) + 1
+                    elif rvol is not None and rvol < 1.1:
+                        failure_counts["RVOL"] = failure_counts.get("RVOL", 0) + 1
+                    elif "rsi" in reason_text:
+                        failure_counts["RSI"] = failure_counts.get("RSI", 0) + 1
+                    elif "ema9" in reason_text or "ema 9" in reason_text:
+                        failure_counts["EMA9 Trigger"] = failure_counts.get("EMA9 Trigger", 0) + 1
+                    else:
+                        failure_counts["Other"] = failure_counts.get("Other", 0) + 1
+
                 tf_summaries[tf] = {
                     "total":          total,
                     "bullish":        bullish,
@@ -997,8 +1039,11 @@ Rules: Use markdown headers. Be direct. Use actual numbers from the data. No dis
                     "signals":        len(signals),
                     "signal_rate":    round(signal_rate * 100, 1),
                     "setups_forming": len(setups),
+                    "setup_rate":     round(len(setups) / total * 100, 1) if total else 0,
                     "avg_score":      avg_score,
                     "stance":         stance,
+                    "grade_dist":     grade_dist,
+                    "failure_counts": failure_counts,
                 }
 
                 # Collect signals for the cross-timeframe signals table
