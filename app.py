@@ -126,12 +126,19 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
 
     @app.get("/api/positions/{symbol}/orders")
     async def get_position_orders(symbol: str, request: Request, _=Depends(login_required)):
-        """Return all open orders related to a specific symbol."""
+        """Return all open/held orders related to a specific symbol (includes bracket legs)."""
         if not bot._require_api():
             return []
         try:
-            orders = bot.get_orders(status="open")
-            return [o for o in orders if o["symbol"].upper() == symbol.upper()]
+            # Use status=all so we capture 'held' stop orders (bracket legs that are
+            # pending activation) in addition to 'new' limit orders.
+            all_orders = bot.get_orders(status="all")
+            active_statuses = {"new", "held", "accepted", "pending_new", "partially_filled"}
+            return [
+                o for o in all_orders
+                if o["symbol"].upper() == symbol.upper()
+                and o["status"] in active_statuses
+            ]
         except Exception as e:
             logger.error(f"Error getting orders for {symbol}: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)

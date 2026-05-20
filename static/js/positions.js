@@ -1,66 +1,166 @@
 /**
- * positions.js — Positions page: summary bar + accordion cards
+ * positions.js — Positions page: summary bar + accordion cards with mini charts
  */
 
-const STATUS_COLORS_POS = {
-    filled: 'text-success', accepted: 'text-info', new: 'text-info',
-    canceled: 'text-base-content/60', cancelled: 'text-base-content/60', expired: 'text-base-content/60',
-    pending_new: 'text-warning', held: 'text-warning', partially_filled: 'text-warning'
-};
+// Track LightweightCharts instances so we can destroy them when cards collapse
+const _posCharts = {};
 
-function buildLegRow(leg) {
-    if (leg.type === 'limit') {
-        return `<div class="flex justify-between text-xs py-1 border-b border-base-300 last:border-0">
-            <span class="text-success font-medium">Take Profit</span>
-            <span class="font-mono">$${leg.limit_price?.toFixed(2) ?? '—'}</span>
-            <span class="${STATUS_COLORS_POS[leg.status] || 'text-base-content/60'}">${leg.status}</span>
-        </div>`;
+// ── Price line extraction ─────────────────────────────────────────────────────
+
+function extractPriceLevels(avgEntry, orders) {
+    const levels = { entry: avgEntry, stop: null, target: null };
+
+    for (const order of orders) {
+        // Check the order itself (Alpaca returns bracket legs as sibling orders, not nested)
+        if ((order.type === 'stop' || order.type === 'stop_limit') && order.stop_price) {
+            levels.stop = order.stop_price;
+        }
+        if (order.type === 'limit' && order.side === 'sell' && order.limit_price) {
+            levels.target = order.limit_price;
+        }
+
+        // Also check nested legs if present
+        if (!order.legs) continue;
+        for (const leg of order.legs) {
+            if ((leg.type === 'stop' || leg.type === 'stop_limit') && leg.stop_price) {
+                levels.stop = leg.stop_price;
+            }
+            if (leg.type === 'limit' && leg.limit_price) {
+                levels.target = leg.limit_price;
+            }
+        }
     }
-    if (leg.type === 'stop' || leg.type === 'stop_limit') {
-        return `<div class="flex justify-between text-xs py-1 border-b border-base-300 last:border-0">
-            <span class="text-error font-medium">Stop Loss</span>
-            <span class="font-mono">$${leg.stop_price?.toFixed(2) ?? '—'}</span>
-            <span class="${STATUS_COLORS_POS[leg.status] || 'text-base-content/60'}">${leg.status}</span>
-        </div>`;
-    }
-    return `<div class="flex justify-between text-xs py-1 border-b border-base-300 last:border-0">
-        <span class="text-base-content/60">${leg.type}</span>
-        <span>—</span>
-        <span class="${STATUS_COLORS_POS[leg.status] || 'text-base-content/60'}">${leg.status}</span>
-    </div>`;
+
+    return levels;
 }
 
-function buildOrderBlock(order) {
-    const typeLabel   = order.order_class === 'bracket' ? 'Bracket' : order.type;
-    const priceLabel  = order.limit_price ? `Limit $${order.limit_price}` : order.stop_price ? `Stop $${order.stop_price}` : 'Market';
-    const statusClass = STATUS_COLORS_POS[order.status] || 'text-base-content/60';
-    const created     = order.created_at ? new Date(order.created_at).toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit'}) : '—';
-    const legs        = (order.legs || []).map(buildLegRow).join('');
+// ── Mini chart ────────────────────────────────────────────────────────────────
 
-    return `<div class="bg-base-200 rounded-lg p-3 mb-2">
-        <div class="flex justify-between items-start mb-1">
-            <div>
-                <span class="text-xs font-semibold">${typeLabel}</span>
-                <span class="text-xs text-base-content/60 ml-2">${priceLabel}</span>
-                <span class="text-xs text-base-content/60 ml-2">×${order.qty}</span>
-            </div>
-            <span class="text-xs font-semibold ${statusClass}">${order.status}</span>
-        </div>
-        <div class="text-xs text-base-content/40 mb-2">${created}</div>
-        ${legs ? `<div class="mt-1">${legs}</div>` : ''}
-    </div>`;
+async function initPositionChart(symbol, containerId, levels) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    // Destroy any existing chart for this symbol
+    if (_posCharts[symbol]) {
+        _posCharts[symbol].remove();
+        delete _posCharts[symbol];
+    }
+
+    try {
+        const res  = await fetch(`/api/market_data?symbol=${encodeURIComponent(symbol)}&interval=1d&period=3mo`);
+        const data = await res.json();
+        if (!data || !data.length) {
+            container.innerHTML = '<div class="text-xs text-base-content/40 text-center py-6">No chart data available</div>';
+            return;
+        }
+
+        const chart = LightweightCharts.createChart(container, {
+            width:           container.clientWidth,
+            height:          280,
+            layout:          { backgroundColor: 'transparent', textColor: '#6b7280' },
+            grid:            { vertLines: { color: '#e5e7eb' }, horzLines: { color: '#e5e7eb' } },
+            crosshair:       { mode: LightweightCharts.CrosshairMode.Normal },
+            rightPriceScale: { borderColor: '#d1d5db' },
+            timeScale:       { borderColor: '#d1d5db', timeVisible: true },
+            handleScroll:    true,
+            handleScale:     true,
+        });
+
+        const candleSeries = chart.addCandlestickSeries({
+            upColor: '#26a69a', downColor: '#ef5350',
+            borderVisible: false,
+            wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+        });
+
+        const toSec = d => typeof d.timestamp === 'number'
+            ? d.timestamp / 1000
+            : new Date(d.timestamp).getTime() / 1000;
+
+        const candles = data
+            .map(d => ({ time: toSec(d), open: d.open, high: d.high, low: d.low, close: d.close }))
+            .sort((a, b) => a.time - b.time);
+
+        candleSeries.setData(candles);
+
+        // Entry price line (green dashed)
+        if (levels.entry) {
+            candleSeries.createPriceLine({
+                price:     levels.entry,
+                color:     '#22c55e',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: 'Entry',
+            });
+        }
+
+        // Stop loss price line (red dashed)
+        if (levels.stop) {
+            candleSeries.createPriceLine({
+                price:     levels.stop,
+                color:     '#ef4444',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: 'Stop',
+            });
+        }
+
+        // Take profit price line (teal dashed)
+        if (levels.target) {
+            candleSeries.createPriceLine({
+                price:     levels.target,
+                color:     '#14b8a6',
+                lineWidth: 1,
+                lineStyle: LightweightCharts.LineStyle.Dashed,
+                axisLabelVisible: true,
+                title: 'Target',
+            });
+        }
+
+        // Fit the visible range to include all price lines (entry, stop, target)
+        const prices = [levels.entry, levels.stop, levels.target].filter(Boolean);
+        if (prices.length > 0) {
+            const minPrice = Math.min(...prices, ...candles.map(c => c.low));
+            const maxPrice = Math.max(...prices, ...candles.map(c => c.high));
+            const padding  = (maxPrice - minPrice) * 0.05;
+            chart.priceScale('right').applyOptions({
+                autoScale: false,
+            });
+            candleSeries.applyOptions({
+                autoscaleInfoProvider: () => ({
+                    priceRange: {
+                        minValue: minPrice - padding,
+                        maxValue: maxPrice + padding,
+                    },
+                }),
+            });
+        }
+
+        chart.timeScale().fitContent();
+        _posCharts[symbol] = chart;
+
+        // Resize when container width changes (e.g. window resize)
+        const ro = new ResizeObserver(() => {
+            chart.applyOptions({ width: container.clientWidth });
+        });
+        ro.observe(container);
+
+    } catch (err) {
+        container.innerHTML = `<div class="text-xs text-error text-center py-6">Chart error: ${err.message}</div>`;
+    }
 }
+
+// ── Card builder ──────────────────────────────────────────────────────────────
 
 function buildPositionCard(p, orders, expanded) {
     const plClass  = p.unrealized_pl >= 0 ? 'text-success' : 'text-error';
     const plPct    = (p.unrealized_plpc * 100).toFixed(2);
     const plSign   = p.unrealized_pl >= 0 ? '+' : '';
-    const ordersHtml = orders.length > 0
-        ? orders.map(buildOrderBlock).join('')
-        : '<div class="text-xs text-base-content/60 py-2">No open orders for this position.</div>';
+    const chartId  = `pos-chart-${p.symbol}`;
 
     return `<div class="collapse collapse-arrow bg-base-100 border border-base-300 rounded-xl" id="pos-card-${p.symbol}">
-        <input type="checkbox" ${expanded ? 'checked' : ''} />
+        <input type="checkbox" ${expanded ? 'checked' : ''} onchange="onPositionCardToggle('${p.symbol}', this.checked)" />
         <div class="collapse-title flex items-center justify-between pr-10">
             <div class="flex items-center gap-3">
                 <span class="font-bold text-base">${p.symbol}</span>
@@ -98,14 +198,36 @@ function buildPositionCard(p, orders, expanded) {
                 </div>
             </div>
 
-            <!-- Open orders / bracket legs -->
-            <div class="mb-4">
-                <h4 class="text-xs font-semibold text-base-content/60 uppercase mb-2">Open Orders</h4>
-                ${ordersHtml}
+            <!-- Mini chart -->
+            <div class="bg-base-200 rounded-xl p-3 mb-4">
+                <div id="${chartId}" style="height: 280px; width: 100%; position: relative;" class="rounded-lg overflow-hidden">
+                </div>
+            </div>
+
+            <!-- Price level legend -->
+            <div class="flex flex-wrap gap-4 text-xs mb-4">
+                <span class="flex items-center gap-1.5">
+                    <span class="inline-block w-6 border-t-2 border-dashed border-success"></span>
+                    Entry $${p.avg_entry_price.toFixed(2)}
+                </span>
+                ${(() => {
+                    const stopOrder = orders.find(o => (o.type === 'stop' || o.type === 'stop_limit') && o.stop_price);
+                    return stopOrder ? `<span class="flex items-center gap-1.5">
+                        <span class="inline-block w-6 border-t-2 border-dashed border-error"></span>
+                        Stop $${stopOrder.stop_price.toFixed(2)}
+                       </span>` : '';
+                })()}
+                ${(() => {
+                    const targetOrder = orders.find(o => o.type === 'limit' && o.side === 'sell' && o.limit_price);
+                    return targetOrder ? `<span class="flex items-center gap-1.5">
+                        <span class="inline-block w-6 border-t-2 border-dashed" style="border-color: #14b8a6;"></span>
+                        Target $${targetOrder.limit_price.toFixed(2)}
+                       </span>` : '';
+                })()}
             </div>
 
             <!-- Actions -->
-            <div class="flex gap-2">
+            <div class="flex justify-end gap-2">
                 <a href="/?symbol=${encodeURIComponent(p.symbol)}" class="btn btn-primary btn-sm gap-2">
                     <i class="bi bi-graph-up"></i> Analyze
                 </a>
@@ -114,10 +236,25 @@ function buildPositionCard(p, orders, expanded) {
     </div>`;
 }
 
+// ── Card toggle handler ───────────────────────────────────────────────────────
+
+// Keyed by symbol: { position, orders } so we can init the chart on first expand
+const _positionData = {};
+
+function onPositionCardToggle(symbol, isOpen) {
+    if (!isOpen) return;
+    const d = _positionData[symbol];
+    if (!d) return;
+    const levels = extractPriceLevels(d.position.avg_entry_price, d.orders);
+    initPositionChart(symbol, `pos-chart-${symbol}`, levels);
+}
+
+// ── Main loader ───────────────────────────────────────────────────────────────
+
 async function loadPositions() {
-    const container  = document.getElementById('positions-container');
-    const summaryEl  = document.getElementById('positions-summary');
-    const urlSymbol  = new URLSearchParams(window.location.search).get('symbol');
+    const container = document.getElementById('positions-container');
+    const summaryEl = document.getElementById('positions-summary');
+    const urlSymbol = new URLSearchParams(window.location.search).get('symbol');
 
     container.innerHTML = `<div class="flex justify-center py-12">
         <span class="loading loading-spinner loading-lg text-primary"></span>
@@ -177,9 +314,23 @@ async function loadPositions() {
             return a.symbol.localeCompare(b.symbol);
         });
 
+        // Store data for deferred chart init
+        sorted.forEach(p => {
+            _positionData[p.symbol] = { position: p, orders: ordersBySymbol[p.symbol] || [] };
+        });
+
         container.innerHTML = sorted.map(p =>
             buildPositionCard(p, ordersBySymbol[p.symbol] || [], p.symbol === (urlSymbol || '').toUpperCase())
         ).join('');
+
+        // Init charts for any cards that start expanded
+        sorted.forEach(p => {
+            const isExpanded = p.symbol === (urlSymbol || '').toUpperCase();
+            if (isExpanded) {
+                const levels = extractPriceLevels(p.avg_entry_price, ordersBySymbol[p.symbol] || []);
+                initPositionChart(p.symbol, `pos-chart-${p.symbol}`, levels);
+            }
+        });
 
     } catch (err) {
         container.innerHTML = `<div class="alert alert-error"><span>Failed to load positions: ${err.message}</span></div>`;
