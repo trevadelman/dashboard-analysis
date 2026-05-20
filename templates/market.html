@@ -1,0 +1,192 @@
+{% extends "layout.html" %}
+
+{% block title %}Market Pulse — Alpaca Trading{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<style>
+    .stance-risk-on  { @apply text-success; }
+    .stance-selective { @apply text-warning; }
+    .stance-wait     { @apply text-info; }
+    .stance-risk-off { @apply text-error; }
+    #ai-commentary { line-height: 1.7; }
+    #ai-commentary h1, #ai-commentary h2, #ai-commentary h3 { font-weight: 600; margin-top: 0.75rem; margin-bottom: 0.25rem; }
+    #ai-commentary p { margin-bottom: 0.5rem; }
+    #ai-commentary ul, #ai-commentary ol { padding-left: 1.25rem; margin-bottom: 0.5rem; }
+    #ai-commentary li { margin-bottom: 0.2rem; }
+    #ai-commentary strong { font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-content-wide">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-bold flex items-center gap-2">
+                <i class="bi bi-activity text-primary"></i>
+                Market Pulse
+            </h1>
+            <p class="text-sm text-base-content/60 mt-1">
+                Aggregate analysis of the scan cache — no live API calls required.
+            </p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span id="pulse-cache-age" class="text-xs text-base-content/40"></span>
+            <!-- Timeframe selector -->
+            <div class="join">
+                <input type="radio" name="pulse-timeframe" value="long"  class="join-item btn btn-sm" aria-label="Long"  checked onchange="loadPulse()" />
+                <input type="radio" name="pulse-timeframe" value="swing" class="join-item btn btn-sm" aria-label="Swing" onchange="loadPulse()" />
+                <input type="radio" name="pulse-timeframe" value="short" class="join-item btn btn-sm" aria-label="Short" onchange="loadPulse()" />
+            </div>
+            <button class="btn btn-ghost btn-sm gap-1" onclick="loadPulse()">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Error state -->
+    <div id="pulse-error" class="hidden">
+        <div class="alert alert-warning">
+            <i class="bi bi-exclamation-triangle"></i>
+            <span id="pulse-error-msg">No scan cache found. Run a scan in the Market Scanner first.</span>
+        </div>
+    </div>
+
+    <!-- Main content (hidden until loaded) -->
+    <div id="pulse-content" class="hidden space-y-6">
+
+        <!-- Stance + Stats row -->
+        <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+
+            <!-- Stance card (wider) -->
+            <div class="card bg-base-100 shadow-xl lg:col-span-2">
+                <div class="card-body">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div id="stance-badge" class="badge badge-lg text-base font-bold px-4 py-3"></div>
+                        <span class="text-xs text-base-content/50">Market Stance</span>
+                    </div>
+                    <p id="stance-summary" class="text-sm text-base-content/70 leading-relaxed"></p>
+                </div>
+            </div>
+
+            <!-- Signal Rate -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body items-center text-center">
+                    <div class="text-3xl font-bold text-primary" id="stat-signal-rate">—</div>
+                    <div class="text-xs text-base-content/50 mt-1">Signals Triggered</div>
+                    <div class="text-xs text-base-content/40" id="stat-signal-count"></div>
+                </div>
+            </div>
+
+            <!-- Setups forming -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body items-center text-center">
+                    <div class="text-3xl font-bold text-warning" id="stat-setup-rate">—</div>
+                    <div class="text-xs text-base-content/50 mt-1">Setups Forming</div>
+                    <div class="text-xs text-base-content/40" id="stat-setup-count"></div>
+                </div>
+            </div>
+
+            <!-- Regime split -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body items-center text-center">
+                    <div class="text-2xl font-bold text-success" id="stat-bullish-pct">—</div>
+                    <div class="text-xs text-base-content/50 mt-1">Bullish</div>
+                    <div class="text-xs text-error font-semibold" id="stat-bearish-pct"></div>
+                </div>
+            </div>
+
+            <!-- Avg score -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body items-center text-center">
+                    <div class="text-3xl font-bold" id="stat-avg-score">—</div>
+                    <div class="text-xs text-base-content/50 mt-1">Avg Score</div>
+                    <div class="text-xs text-base-content/40">out of 100</div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Failure gate + Grade distribution -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+            <!-- Top failure gate -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body">
+                    <h3 class="card-title text-sm font-semibold mb-3">
+                        <i class="bi bi-x-circle text-error"></i> Top Signal Blockers
+                    </h3>
+                    <div id="failure-bars" class="space-y-2"></div>
+                </div>
+            </div>
+
+            <!-- Grade distribution -->
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body">
+                    <h3 class="card-title text-sm font-semibold mb-3">
+                        <i class="bi bi-bar-chart text-primary"></i> Grade Distribution
+                    </h3>
+                    <div id="grade-bars" class="space-y-2"></div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- AI Commentary -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="card-title text-sm font-semibold">
+                        <i class="bi bi-cpu text-primary"></i> AI Market Commentary
+                    </h3>
+                    <button id="ai-regen-btn" class="btn btn-ghost btn-xs gap-1" onclick="streamAI()">
+                        <i class="bi bi-arrow-clockwise"></i> Regenerate
+                    </button>
+                </div>
+                <div id="ai-loading" class="flex items-center gap-2 text-sm text-base-content/50">
+                    <span class="loading loading-dots loading-sm"></span> Generating commentary…
+                </div>
+                <div id="ai-commentary" class="text-sm text-base-content/80 hidden"></div>
+                <div id="ai-error" class="text-sm text-error hidden"></div>
+            </div>
+        </div>
+
+        <!-- Sector breakdown -->
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body p-0">
+                <div class="p-4 pb-0">
+                    <h3 class="font-semibold text-sm flex items-center gap-2">
+                        <i class="bi bi-grid-3x3-gap text-primary"></i> Sector Breakdown
+                    </h3>
+                </div>
+                <div class="overflow-x-auto mt-3">
+                    <table class="table table-sm table-zebra w-full">
+                        <thead>
+                            <tr class="bg-base-200">
+                                <th class="text-xs">Sector</th>
+                                <th class="text-xs text-right">Symbols</th>
+                                <th class="text-xs text-right">Avg Score</th>
+                                <th class="text-xs text-right">Signals</th>
+                                <th class="text-xs text-right">Setups</th>
+                                <th class="text-xs text-right">Bullish %</th>
+                                <th class="text-xs">Top Failure</th>
+                            </tr>
+                        </thead>
+                        <tbody id="sector-table-body">
+                            <tr><td colspan="7" class="text-center text-base-content/40 py-6 text-sm">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/market.js"></script>
+{% endblock %}

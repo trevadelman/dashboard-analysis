@@ -512,11 +512,22 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
         scanner = MarketScanner(bot.data_client)
 
         def event_generator():
+            import json as _json
+            collected = []
             try:
                 for chunk in scanner.scan_stream(list_name=list_name, custom=custom, timeframe=timeframe):
+                    # Collect result events so we can write the cache after streaming
+                    try:
+                        payload = _json.loads(chunk.removeprefix("data: ").strip())
+                        if payload.get("type") == "result":
+                            collected.append(payload)
+                        elif payload.get("type") == "done":
+                            # Write cache once the scan is complete
+                            scanner.write_cache(collected, list_name, timeframe)
+                    except Exception:
+                        pass
                     yield chunk
             except Exception as e:
-                import json as _json
                 logger.error(f"Scanner error: {e}")
                 yield f"data: {_json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
@@ -525,6 +536,415 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.get("/api/scan/cache")
+    async def get_scan_cache(
+        request: Request,
+        timeframe: str = "long",
+        _=Depends(login_required),
+    ):
+        """
+        Return cached scan results for a specific timeframe.
+
+        The cache file is structured as:
+          { "long": { "AAPL": {...}, ... }, "swing": {...}, "short": {...}, "last_updated": "..." }
+
+        Returns:
+          { "timeframe": tf, "results": [...], "total": N, "signals": N, "last_updated": "..." }
+        """
+        import json as _json
+        cache_path = os.path.join("data", "scan_cache.json")
+        if not os.path.exists(cache_path):
+            return JSONResponse({"error": "No scan cache found — run a scan first"}, status_code=404)
+        try:
+            with open(cache_path, "r") as f:
+                cache = _json.load(f)
+
+            tf_data = cache.get(timeframe, {})
+            if not isinstance(tf_data, dict):
+                tf_data = {}
+
+            results = list(tf_data.values())
+            return {
+                "timeframe":    timeframe,
+                "results":      results,
+                "total":        len(results),
+                "signals":      sum(1 for r in results if r.get("signal") in ("BUY", "SELL")),
+                "last_updated": cache.get("last_updated", ""),
+            }
+        except Exception as e:
+            logger.error(f"Error reading scan cache: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/scan/cache/info")
+    async def get_scan_cache_info(request: Request, _=Depends(login_required)):
+        """
+        Return metadata about the scan cache — counts per timeframe, last updated.
+        Used by the UI to populate the cache badge without loading all results.
+        """
+        import json as _json
+        cache_path = os.path.join("data", "scan_cache.json")
+        if not os.path.exists(cache_path):
+            return {"cached": False}
+        try:
+            with open(cache_path, "r") as f:
+                cache = _json.load(f)
+            info = {"cached": True, "last_updated": cache.get("last_updated", ""), "timeframes": {}}
+            for tf in ("long", "swing", "short"):
+                tf_data = cache.get(tf, {})
+                if isinstance(tf_data, dict) and tf_data:
+                    results = list(tf_data.values())
+                    info["timeframes"][tf] = {
+                        "total":   len(results),
+                        "signals": sum(1 for r in results if r.get("signal") in ("BUY", "SELL")),
+                    }
+            return info
+        except Exception as e:
+            logger.error(f"Error reading scan cache info: {e}")
+            return {"cached": False}
+
+    @app.get("/market", response_class=HTMLResponse)
+    async def market_pulse_page(request: Request, _=Depends(login_required)):
+        return templates.TemplateResponse(request, "market.html", {"active_page": "market"})
+
+    @app.get("/api/market/pulse")
+    async def get_market_pulse(
+        request: Request,
+        timeframe: str = "long",
+        _=Depends(login_required),
+    ):
+        """
+        Compute market pulse statistics from the scan cache.
+
+        Returns overall market stats + per-sector breakdown.
+        No Alpaca API calls — reads only from data/scan_cache.json.
+        """
+        import json as _json
+        from screeners.symbol_lists import SECTORS
+
+        cache_path = os.path.join("data", "scan_cache.json")
+        if not os.path.exists(cache_path):
+            return JSONResponse({"error": "No scan cache — run a scan first"}, status_code=404)
+
+        try:
+            with open(cache_path, "r") as f:
+                cache = _json.load(f)
+
+            tf_data = cache.get(timeframe, {})
+            if not isinstance(tf_data, dict) or not tf_data:
+                return JSONResponse(
+                    {"error": f"No cached results for timeframe '{timeframe}' — run a scan first"},
+                    status_code=404,
+                )
+
+            results = list(tf_data.values())
+            last_updated = cache.get("last_updated", "")
+
+            def _compute_stats(rows):
+                if not rows:
+                    return None
+                total = len(rows)
+                signals = [r for r in rows if r.get("signal") in ("BUY", "SELL")]
+                bullish = sum(1 for r in rows if r.get("regime") == "BULLISH")
+                bearish = sum(1 for r in rows if r.get("regime") == "BEARISH")
+                no_trade = total - bullish - bearish
+
+                scores = [r["score"] for r in rows if r.get("score") is not None]
+                avg_score = round(sum(scores) / len(scores), 1) if scores else 0
+
+                # Grade distribution — assign grades to ALL symbols based on score,
+                # not just signal rows. This makes the distribution meaningful even
+                # when signals are rare.
+                grade_dist = {"A": 0, "B": 0, "C": 0, "D": 0}
+                for r in rows:
+                    sc = r.get("score")
+                    if sc is None:
+                        continue
+                    if sc >= 80:
+                        grade_dist["A"] += 1
+                    elif sc >= 60:
+                        grade_dist["B"] += 1
+                    elif sc >= 40:
+                        grade_dist["C"] += 1
+                    else:
+                        grade_dist["D"] += 1
+
+                # Score distribution buckets (0-20, 20-40, 40-60, 60-80, 80-100)
+                score_buckets = {"0-20": 0, "20-40": 0, "40-60": 0, "60-80": 0, "80-100": 0}
+                for r in rows:
+                    sc = r.get("score")
+                    if sc is None:
+                        continue
+                    if sc < 20:
+                        score_buckets["0-20"] += 1
+                    elif sc < 40:
+                        score_buckets["20-40"] += 1
+                    elif sc < 60:
+                        score_buckets["40-60"] += 1
+                    elif sc < 80:
+                        score_buckets["60-80"] += 1
+                    else:
+                        score_buckets["80-100"] += 1
+
+                # "Setups forming" — passed BB compression + RS but no trigger yet.
+                # These are coiled + outperforming, waiting for the breakout.
+                setups_forming = sum(
+                    1 for r in rows
+                    if r.get("signal") == "NONE"
+                    and r.get("tier_reached", 1) >= 2
+                    and (r.get("bb_width_pct") or 100) <= 50
+                    and (r.get("rs_vs_spy") or -999) >= 0
+                )
+
+                # Top failure gate — infer from raw indicator values for accuracy.
+                # For no-signal rows that reached Tier 2, determine which gate blocked them.
+                failure_counts = {}
+                for r in rows:
+                    if r.get("signal") != "NONE":
+                        continue
+                    if r.get("tier_reached", 1) < 2:
+                        # Blocked at Tier 1 (regime)
+                        failure_counts["Regime"] = failure_counts.get("Regime", 0) + 1
+                        continue
+                    # Tier 2 reached — determine which gate failed first
+                    bb = r.get("bb_width_pct")
+                    rs = r.get("rs_vs_spy")
+                    rvol = r.get("rvol")
+                    rsi = r.get("rsi")
+                    reason_text = (r.get("tier2_reason") or "").lower()
+
+                    if bb is not None and bb > 50:
+                        failure_counts["BB Compression"] = failure_counts.get("BB Compression", 0) + 1
+                    elif rs is not None and rs < 0:
+                        failure_counts["Relative Strength"] = failure_counts.get("Relative Strength", 0) + 1
+                    elif "breakout" in reason_text or "broke" in reason_text or "range" in reason_text:
+                        failure_counts["Breakout"] = failure_counts.get("Breakout", 0) + 1
+                    elif rvol is not None and rvol < 1.1:
+                        failure_counts["RVOL"] = failure_counts.get("RVOL", 0) + 1
+                    elif "rsi" in reason_text:
+                        failure_counts["RSI"] = failure_counts.get("RSI", 0) + 1
+                    elif "ema9" in reason_text or "ema 9" in reason_text:
+                        failure_counts["EMA9 Trigger"] = failure_counts.get("EMA9 Trigger", 0) + 1
+                    else:
+                        failure_counts["Other"] = failure_counts.get("Other", 0) + 1
+
+                top_failure = max(failure_counts, key=failure_counts.get) if failure_counts else "N/A"
+
+                # Market stance — use score distribution + regime + signal rate
+                signal_rate = len(signals) / total if total else 0
+                bullish_rate = bullish / total if total else 0
+                high_score_pct = (grade_dist["A"] + grade_dist["B"]) / total if total else 0
+
+                if signal_rate >= 0.15 and bullish_rate >= 0.6:
+                    stance = "RISK ON"
+                elif signal_rate >= 0.05 and bullish_rate >= 0.5:
+                    stance = "SELECTIVE"
+                elif bullish_rate < 0.3:
+                    stance = "RISK OFF"
+                elif high_score_pct >= 0.20 and bullish_rate >= 0.5:
+                    # Many high-quality setups forming but not yet triggered
+                    stance = "COILING"
+                else:
+                    stance = "WAIT"
+
+                return {
+                    "total":           total,
+                    "signals":         len(signals),
+                    "signal_rate":     round(signal_rate * 100, 1),
+                    "setups_forming":  setups_forming,
+                    "setup_rate":      round(setups_forming / total * 100, 1) if total else 0,
+                    "bullish":         bullish,
+                    "bearish":         bearish,
+                    "no_trade":        no_trade,
+                    "bullish_pct":     round(bullish / total * 100, 1) if total else 0,
+                    "bearish_pct":     round(bearish / total * 100, 1) if total else 0,
+                    "avg_score":       avg_score,
+                    "grade_dist":      grade_dist,
+                    "score_buckets":   score_buckets,
+                    "top_failure":     top_failure,
+                    "failure_counts":  failure_counts,
+                    "stance":          stance,
+                    "high_score_pct":  round(high_score_pct * 100, 1),
+                }
+
+            overall = _compute_stats(results)
+
+            # Build sector lookup: symbol → sector name
+            sym_to_sector = {}
+            for sector_name, syms in SECTORS.items():
+                for s in syms:
+                    if s not in sym_to_sector:
+                        sym_to_sector[s] = sector_name
+
+            # Group results by sector
+            sector_buckets = {}
+            for r in results:
+                sector = sym_to_sector.get(r.get("symbol", ""), "Other")
+                sector_buckets.setdefault(sector, []).append(r)
+
+            sectors = []
+            for sector_name, rows in sector_buckets.items():
+                stats = _compute_stats(rows)
+                if stats:
+                    stats["sector"] = sector_name
+                    sectors.append(stats)
+
+            sectors.sort(key=lambda s: s["avg_score"], reverse=True)
+
+            return {
+                "timeframe":    timeframe,
+                "last_updated": last_updated,
+                "overall":      overall,
+                "sectors":      sectors,
+            }
+
+        except Exception as e:
+            logger.error(f"Market pulse error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/market/pulse/stream")
+    async def market_pulse_stream(
+        request: Request,
+        timeframe: str = "long",
+        _=Depends(login_required),
+    ):
+        """
+        Stream AI commentary on the current market pulse via SSE.
+        Reads the pulse stats and feeds them to the AI for a plain-English read.
+        """
+        from fastapi.responses import StreamingResponse
+        import json as _json
+
+        # Fetch the pulse stats first
+        pulse_res = await get_market_pulse(request, timeframe=timeframe, _=None)
+        if isinstance(pulse_res, JSONResponse):
+            async def err():
+                yield f"data: {_json.dumps({'type': 'error', 'message': 'No cache data available'})}\n\n"
+            return StreamingResponse(err(), media_type="text/event-stream")
+
+        pulse = pulse_res if isinstance(pulse_res, dict) else {}
+        overall = pulse.get("overall", {})
+        sectors = pulse.get("sectors", [])
+
+        top_sectors    = sectors[:5]
+        bottom_sectors = sectors[-3:] if len(sectors) > 5 else []
+        hot_sectors    = [s for s in sectors if s.get("signal_rate", 0) >= 10]
+        coiling_sectors = [s for s in sectors if s.get("setup_rate", 0) >= 10]
+
+        # Build full sector table for the AI
+        sector_table = "\n".join(
+            f"  {s['sector']}: score={s['avg_score']}, signals={s['signals']} ({s['signal_rate']}%), "
+            f"setups={s.get('setups_forming', 0)} ({s.get('setup_rate', 0)}%), "
+            f"bullish={s['bullish_pct']}%, top_failure={s.get('top_failure', 'N/A')}"
+            for s in sectors
+        )
+
+        # Grade and score distribution
+        gd = overall.get("grade_dist", {})
+        sb = overall.get("score_buckets", {})
+        fc = overall.get("failure_counts", {})
+        failure_breakdown = ", ".join(f"{k}: {v}" for k, v in sorted(fc.items(), key=lambda x: -x[1]))
+
+        prompt = f"""You are a quantitative market analyst reviewing a batch scan of {overall.get('total', 0)} stocks.
+
+## SCAN PARAMETERS
+- Timeframe: {timeframe.upper()} ({'daily bars' if timeframe == 'long' else 'hourly bars' if timeframe == 'swing' else '15-min bars'})
+- Strategy: Compression breakout with relative strength filter (BB squeeze + RS vs SPY + RVOL + RSI momentum)
+- Scoring: 0-100 composite (BB compression 25pts, RS vs SPY 25pts, RVOL 20pts, RSI momentum 15pts, ATR contraction 15pts)
+
+## OVERALL MARKET STATS
+- Stance: {overall.get('stance', 'N/A')}
+- Regime: {overall.get('bullish_pct', 0)}% BULLISH / {overall.get('bearish_pct', 0)}% BEARISH / {round((overall.get('no_trade', 0) / overall.get('total', 1)) * 100, 1)}% NO_TRADE
+- Avg Score: {overall.get('avg_score', 0)}/100
+- High-quality setups (A+B grade): {overall.get('high_score_pct', 0)}% of universe
+- Triggered signals (BUY/SELL): {overall.get('signals', 0)} ({overall.get('signal_rate', 0)}%)
+- Setups forming (compressed + outperforming, no trigger yet): {overall.get('setups_forming', 0)} ({overall.get('setup_rate', 0)}%)
+
+## GRADE DISTRIBUTION (all symbols, score-based)
+- A (80-100): {gd.get('A', 0)} symbols
+- B (60-79):  {gd.get('B', 0)} symbols
+- C (40-59):  {gd.get('C', 0)} symbols
+- D (0-39):   {gd.get('D', 0)} symbols
+
+## SCORE DISTRIBUTION
+- 80-100: {sb.get('80-100', 0)} | 60-80: {sb.get('60-80', 0)} | 40-60: {sb.get('40-60', 0)} | 20-40: {sb.get('20-40', 0)} | 0-20: {sb.get('0-20', 0)}
+
+## SIGNAL FAILURE BREAKDOWN (why signals aren't triggering)
+{failure_breakdown if failure_breakdown else 'N/A'}
+
+## ALL SECTORS (sorted by avg score, highest first)
+{sector_table}
+
+{"## HOT SECTORS (>10% signal rate): " + ", ".join(s['sector'] for s in hot_sectors) if hot_sectors else "## No sectors with >10% signal rate"}
+{"## COILING SECTORS (>10% setups forming): " + ", ".join(s['sector'] for s in coiling_sectors) if coiling_sectors else ""}
+
+## YOUR TASK
+Provide a structured market commentary with these sections:
+
+### Market Environment
+2-3 sentences on what the data tells you about the current market environment. Reference specific numbers.
+
+### Positioning Stance
+What should a momentum trader do right now? Be specific: sit on hands, hold SPY, look for selective entries, etc. Explain why based on the data.
+
+### Sector Rotation
+Which sectors are leading, which are lagging, and what does the rotation pattern suggest? Reference the failure breakdown to explain why sectors are or aren't triggering.
+
+### Setups to Watch
+If there are setups forming (compressed + outperforming but not yet triggered), what does that mean? Are we close to a broad breakout or is this a false coil?
+
+### Actionable Takeaway
+One specific, concrete action a trader should take today based on this data.
+
+Rules: Use markdown headers. Be direct. Use actual numbers from the data. No disclaimers. Write like a seasoned trader reviewing a morning scan, not a compliance officer."""
+
+        def event_generator():
+            try:
+                for chunk in bot.ai.stream_analysis(prompt):
+                    yield f"data: {_json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
+                yield f"data: {_json.dumps({'type': 'done'})}\n\n"
+            except Exception as e:
+                logger.error(f"Market pulse AI stream error: {e}")
+                yield f"data: {_json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.get("/api/scan/sectors")
+    async def get_sectors(request: Request, _=Depends(login_required)):
+        """Return the list of available GICS sector names."""
+        from screeners.symbol_lists import SECTORS
+        return {"sectors": list(SECTORS.keys())}
+
+    @app.get("/api/scan/universe/info")
+    async def get_universe_info(request: Request, _=Depends(login_required)):
+        """Return metadata about the cached asset universe."""
+        from screeners.symbol_lists import get_universe_cache_info
+        return get_universe_cache_info()
+
+    @app.post("/api/scan/universe/refresh")
+    async def refresh_universe(request: Request, _=Depends(login_required)):
+        """
+        Trigger a fresh fetch of the Alpaca asset universe.
+        Deletes the existing cache so the next scan will re-fetch.
+        """
+        import json as _json
+        if not bot._require_api():
+            return JSONResponse({"error": "No Alpaca credentials"}, status_code=400)
+        try:
+            from screeners.symbol_lists import fetch_alpaca_universe, _UNIVERSE_CACHE_PATH
+            import os as _os
+            cache_path = _os.path.normpath(_UNIVERSE_CACHE_PATH)
+            if _os.path.exists(cache_path):
+                _os.remove(cache_path)
+            symbols = fetch_alpaca_universe(bot.trading_client, min_price=1.0)
+            return {"status": "ok", "count": len(symbols)}
+        except Exception as e:
+            logger.error(f"Universe refresh error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.get("/api/market_data")
     async def get_market_data(

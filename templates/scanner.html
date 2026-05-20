@@ -19,8 +19,48 @@
                 Market Scanner
             </h1>
             <p class="text-sm text-base-content/60 mt-1">
-                Batch scan symbols using Tier 1 (regime) + Tier 2 (compression/RS/RVOL). Click any row to open in the Analysis Dashboard.
+                Batch scan symbols using Tier 1 (regime) + Tier 2 (compression/RS/RVOL).
+                Click any row to open in the Analysis Dashboard.
             </p>
+        </div>
+
+        <!-- Header action buttons -->
+        <div class="flex items-center gap-2">
+            <!-- Universe info popover -->
+            <div class="dropdown dropdown-end" id="universe-dropdown">
+                <button tabindex="0" id="universe-popover-btn" class="btn btn-ghost btn-sm gap-1 hidden">
+                    <i class="bi bi-database"></i>
+                    <span id="universe-btn-label">Universe</span>
+                    <i class="bi bi-chevron-down text-xs opacity-50"></i>
+                </button>
+                <div tabindex="0" class="dropdown-content z-50 card card-compact shadow-xl bg-base-100 border border-base-300 w-72 mt-1">
+                    <div class="card-body gap-2">
+                        <h3 class="font-semibold text-sm">Asset Universe</h3>
+                        <p id="universe-detail-text" class="text-xs text-base-content/60"></p>
+                        <button id="refresh-universe-btn" class="btn btn-sm btn-outline btn-primary gap-1 w-full" onclick="refreshUniverse()">
+                            <i class="bi bi-arrow-clockwise"></i> Refresh from Alpaca
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cache info popover -->
+            <div class="dropdown dropdown-end" id="cache-dropdown">
+                <button tabindex="0" id="cache-popover-btn" class="btn btn-ghost btn-sm gap-1 hidden">
+                    <i class="bi bi-clock-history"></i>
+                    <span id="cache-btn-label">Cache</span>
+                    <i class="bi bi-chevron-down text-xs opacity-50"></i>
+                </button>
+                <div tabindex="0" class="dropdown-content z-50 card card-compact shadow-xl bg-base-100 border border-base-300 w-72 mt-1">
+                    <div class="card-body gap-2">
+                        <h3 class="font-semibold text-sm">Scan Cache</h3>
+                        <div id="cache-detail-text" class="text-xs text-base-content/60 space-y-1"></div>
+                        <button class="btn btn-sm btn-primary gap-1 w-full" onclick="loadFromCache()">
+                            <i class="bi bi-cloud-download"></i> Load Cache
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -33,34 +73,72 @@
                 <div class="form-control">
                     <label class="label py-1"><span class="label-text text-sm font-medium">Timeframe</span></label>
                     <div class="join">
-                        <input type="radio" name="scan-timeframe" id="tf-long"  value="long"  class="join-item btn btn-sm" aria-label="Long (Daily)"   checked />
+                        <input type="radio" name="scan-timeframe" id="tf-long"  value="long"  class="join-item btn btn-sm" aria-label="Long (Daily)"    checked />
                         <input type="radio" name="scan-timeframe" id="tf-swing" value="swing" class="join-item btn btn-sm" aria-label="Swing (Hourly)" />
-                        <input type="radio" name="scan-timeframe" id="tf-short" value="short" class="join-item btn btn-sm" aria-label="Short (15m)" />
+                        <input type="radio" name="scan-timeframe" id="tf-short" value="short" class="join-item btn btn-sm" aria-label="Short (15-min)" />
                     </div>
                 </div>
 
-                <!-- List selector -->
+                <!-- Universe / List selector -->
                 <div class="form-control">
-                    <label class="label py-1"><span class="label-text text-sm font-medium">Symbol List</span></label>
-                    <select id="scan-list-select" class="select select-bordered select-sm w-52" onchange="toggleCustomInput()">
-                        <option value="sp500_top100">S&amp;P 500 Top 100 (~36s)</option>
-                        <option value="nasdaq100_top50">NASDAQ 100 Top 50 (~18s)</option>
-                        <option value="sector_etfs">Sector ETFs (~7s)</option>
-                        <option value="russell2000">Russell 2000 Sample (~7s)</option>
-                        <option value="custom">Custom List</option>
+                    <label class="label py-1"><span class="label-text text-sm font-medium">Universe</span></label>
+                    <select id="scan-list-select" class="select select-bordered select-sm w-56" onchange="onListChange()">
+                        <optgroup label="Curated Lists">
+                            <option value="sp500_top100">S&amp;P 500 Top 100 (~36s)</option>
+                            <option value="nasdaq100_top50">NASDAQ 100 Top 50 (~18s)</option>
+                            <option value="sector_etfs">Sector ETFs (~7s)</option>
+                            <option value="russell2000">Russell 2000 Sample (~7s)</option>
+                        </optgroup>
+                        <optgroup label="Sector (GICS)">
+                            <option value="sector:Technology">Technology (~50)</option>
+                            <option value="sector:Communication Services">Communication Services (~30)</option>
+                            <option value="sector:Consumer Discretionary">Consumer Discretionary (~40)</option>
+                            <option value="sector:Consumer Staples">Consumer Staples (~30)</option>
+                            <option value="sector:Health Care">Health Care (~40)</option>
+                            <option value="sector:Financials">Financials (~40)</option>
+                            <option value="sector:Industrials">Industrials (~40)</option>
+                            <option value="sector:Energy">Energy (~40)</option>
+                            <option value="sector:Materials">Materials (~40)</option>
+                            <option value="sector:Real Estate">Real Estate (~40)</option>
+                            <option value="sector:Utilities">Utilities (~30)</option>
+                        </optgroup>
+                        <optgroup label="Broad Universe">
+                            <option value="all_sectors">All Sectors (~500, ~3 min)</option>
+                            <option value="all_universe">Full Universe (cached Alpaca)</option>
+                        </optgroup>
+                        <optgroup label="Custom">
+                            <option value="custom">Custom List</option>
+                        </optgroup>
+                    </select>
+                </div>
+
+                <!-- Grade filter -->
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-sm font-medium">Min Grade</span></label>
+                    <select id="scan-grade-filter" class="select select-bordered select-sm w-28" onchange="applyFilters()">
+                        <option value="">All</option>
+                        <option value="A">A only</option>
+                        <option value="B">B or better</option>
+                        <option value="C">C or better</option>
+                    </select>
+                </div>
+
+                <!-- Signal filter -->
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-sm font-medium">Signal</span></label>
+                    <select id="scan-signal-filter" class="select select-bordered select-sm w-32" onchange="applyFilters()">
+                        <option value="">All</option>
+                        <option value="BUY">BUY only</option>
+                        <option value="SELL">SELL only</option>
+                        <option value="SIGNAL">BUY + SELL</option>
                     </select>
                 </div>
 
                 <!-- Custom symbols (hidden by default) -->
                 <div id="scan-custom-wrap" class="form-control hidden">
                     <label class="label py-1"><span class="label-text text-sm font-medium">Symbols (comma-separated)</span></label>
-                    <div class="flex gap-2">
-                        <input type="text" id="scan-custom-input" placeholder="AAPL, MSFT, NVDA, TSLA"
-                               class="input input-bordered input-sm w-72 font-mono" />
-                        <button id="scan-save-list-btn" class="btn btn-ghost btn-sm gap-1 hidden" onclick="saveCurrentList()" title="Save this list">
-                            <i class="bi bi-bookmark-plus"></i> Save
-                        </button>
-                    </div>
+                    <input type="text" id="scan-custom-input" placeholder="AAPL, MSFT, NVDA, TSLA"
+                           class="input input-bordered input-sm w-72 font-mono" />
                 </div>
 
                 <!-- Buttons -->
@@ -101,21 +179,23 @@
                     <thead>
                         <tr class="bg-base-200">
                             <th class="w-6"></th>
-                            <th class="text-xs">Symbol</th>
-                            <th class="text-xs">Price</th>
+                            <th class="text-xs cursor-pointer select-none" onclick="sortBy('symbol')">Symbol <i class="bi bi-arrow-down-up opacity-40"></i></th>
+                            <th class="text-xs cursor-pointer select-none" onclick="sortBy('price')">Price <i class="bi bi-arrow-down-up opacity-40"></i></th>
                             <th class="text-xs">Regime</th>
                             <th class="text-xs text-center">Tier</th>
                             <th class="text-xs">Signal</th>
-                            <th class="text-xs">RS vs SPY</th>
-                            <th class="text-xs">RVOL</th>
-                            <th class="text-xs">BB Width %</th>
-                            <th class="text-xs">RSI</th>
+                            <th class="text-xs cursor-pointer select-none" onclick="sortBy('score')">Score <i class="bi bi-arrow-down-up opacity-40"></i></th>
+                            <th class="text-xs">Grade</th>
+                            <th class="text-xs cursor-pointer select-none" onclick="sortBy('rs_vs_spy')">RS vs SPY <i class="bi bi-arrow-down-up opacity-40"></i></th>
+                            <th class="text-xs cursor-pointer select-none" onclick="sortBy('rvol')">RVOL <i class="bi bi-arrow-down-up opacity-40"></i></th>
+                            <th class="text-xs cursor-pointer select-none" onclick="sortBy('bb_width_pct')">BB Width % <i class="bi bi-arrow-down-up opacity-40"></i></th>
+                            <th class="text-xs cursor-pointer select-none" onclick="sortBy('rsi')">RSI <i class="bi bi-arrow-down-up opacity-40"></i></th>
                         </tr>
                     </thead>
                     <tbody id="scan-results-body">
                         <tr>
-                            <td colspan="10" class="text-center text-base-content/40 py-10 text-sm">
-                                Select a list and click <strong>Start Scan</strong> to begin.
+                            <td colspan="12" class="text-center text-base-content/40 py-10 text-sm">
+                                Select a universe and click <strong>Start Scan</strong> to begin, or <strong>Load Cache</strong> to view cached results.
                             </td>
                         </tr>
                     </tbody>

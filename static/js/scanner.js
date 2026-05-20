@@ -3,16 +3,22 @@
  */
 
 let scanSource  = null;
-let scanResults = [];
+let scanResults = [];   // all results from the current/loaded scan
 
-// Saved custom lists: { name: string, symbols: string }[]
-let savedLists = JSON.parse(localStorage.getItem('scanner_saved_lists') || '[]');
+// Sort state
+let _sortKey = 'score';
+let _sortAsc = false;
+
+// Grade ordering for filter comparisons
+const GRADE_ORDER = { A: 4, B: 3, C: 2, D: 1 };
 
 const LIST_LABELS = {
     sp500_top100:    'S&P 500 Top 100',
     nasdaq100_top50: 'NASDAQ 100 Top 50',
     sector_etfs:     'Sector ETFs',
     russell2000:     'Russell 2000 Sample',
+    all_sectors:     'All Sectors',
+    all_universe:    'Full Universe',
     custom:          'Custom List',
 };
 
@@ -24,9 +30,14 @@ function getSelectedTimeframe() {
 }
 
 function startScan() {
-    const listName  = document.getElementById('scan-list-select').value;
-    const custom    = document.getElementById('scan-custom-input').value.trim();
+    let listName = document.getElementById('scan-list-select').value;
+    const custom = document.getElementById('scan-custom-input').value.trim();
     const timeframe = getSelectedTimeframe();
+
+    // Resolve saved_N → custom
+    if (listName.startsWith('saved_')) {
+        listName = 'custom';
+    }
 
     if (listName === 'custom' && !custom) {
         showScanStatus('error', 'Enter at least one symbol in the custom field.');
@@ -60,6 +71,69 @@ function stopScan() {
     showScanStatus('info', 'Scan stopped.');
 }
 
+// ── Cache ─────────────────────────────────────────────────────────────────────
+
+async function checkCache() {
+    try {
+        const res = await fetch('/api/scan/cache/info');
+        if (!res.ok) return;
+        const info = await res.json();
+        if (!info.cached) return;
+
+        const popoverBtn = document.getElementById('cache-popover-btn');
+        const label      = document.getElementById('cache-btn-label');
+        const detail     = document.getElementById('cache-detail-text');
+
+        const age = _cacheAge(info.last_updated);
+        label.textContent = `Cache · ${age} ago`;
+
+        const tfs = Object.entries(info.timeframes || {});
+        if (tfs.length === 0) {
+            detail.innerHTML = '<span>No results cached yet.</span>';
+        } else {
+            detail.innerHTML = tfs.map(([tf, d]) =>
+                `<div class="flex justify-between"><span class="font-medium capitalize">${tf}</span><span>${d.total.toLocaleString()} symbols · ${d.signals} signals</span></div>`
+            ).join('');
+        }
+
+        popoverBtn.classList.remove('hidden');
+    } catch (_) {}
+}
+
+async function loadFromCache() {
+    const timeframe = getSelectedTimeframe();
+    try {
+        const res = await fetch(`/api/scan/cache?timeframe=${encodeURIComponent(timeframe)}`);
+        if (!res.ok) { showScanStatus('error', 'No cache found for this timeframe — run a scan first.'); return; }
+        const data = await res.json();
+        if (!data.results || data.results.length === 0) {
+            showScanStatus('error', `No cached results for timeframe "${timeframe}" — run a scan first.`);
+            return;
+        }
+
+        scanResults = data.results;
+        resetUI();
+        renderAllRows();
+
+        const age = _cacheAge(data.last_updated);
+        document.getElementById('scan-stats').textContent =
+            `Loaded from cache — ${data.total} symbols, ${data.signals} signals (${timeframe}, ${age} ago)`;
+        document.getElementById('scan-progress-wrap').classList.remove('hidden');
+        document.getElementById('scan-progress-bar').style.width = '100%';
+        document.getElementById('scan-export-btn').classList.remove('hidden');
+    } catch (e) {
+        showScanStatus('error', `Failed to load cache: ${e.message}`);
+    }
+}
+
+function _cacheAge(isoStr) {
+    if (!isoStr) return '?';
+    const diff = Math.round((Date.now() - new Date(isoStr).getTime()) / 1000);
+    if (diff < 60)   return `${diff}s`;
+    if (diff < 3600) return `${Math.round(diff / 60)}m`;
+    return `${Math.round(diff / 3600)}h`;
+}
+
 // ── SSE event handlers ────────────────────────────────────────────────────────
 
 function handleEvent(evt) {
@@ -81,12 +155,12 @@ function onStart(evt) {
     document.getElementById('scan-progress-wrap').classList.remove('hidden');
     document.getElementById('scan-export-btn').classList.add('hidden');
     document.getElementById('scan-results-body').innerHTML =
-        '<tr><td colspan="10" class="text-center text-base-content/40 py-6 text-sm">Scanning…</td></tr>';
+        '<tr><td colspan="12" class="text-center text-base-content/40 py-6 text-sm">Scanning…</td></tr>';
 }
 
 function onResult(evt) {
     scanResults.push(evt);
-    renderRow(evt);
+    appendRow(evt);
 }
 
 function onProgress(evt) {
@@ -107,8 +181,11 @@ function onDone(evt) {
 
     if (scanResults.length === 0) {
         document.getElementById('scan-results-body').innerHTML =
-            '<tr><td colspan="10" class="text-center text-base-content/40 py-6 text-sm">No results returned.</td></tr>';
+            '<tr><td colspan="12" class="text-center text-base-content/40 py-6 text-sm">No results returned.</td></tr>';
     }
+
+    // Update cache badge
+    checkCache();
 }
 
 function onError(evt) {
@@ -118,14 +195,83 @@ function onError(evt) {
     showScanStatus('error', evt.message || 'Unknown error');
 }
 
+// ── Filtering & sorting ───────────────────────────────────────────────────────
+
+function applyFilters() {
+    renderAllRows();
+}
+
+function sortBy(key) {
+    if (_sortKey === key) {
+        _sortAsc = !_sortAsc;
+    } else {
+        _sortKey = key;
+        _sortAsc = key === 'symbol';   // default asc for symbol, desc for numbers
+    }
+    renderAllRows();
+}
+
+function _filteredSorted() {
+    const gradeFilter  = document.getElementById('scan-grade-filter').value;
+    const signalFilter = document.getElementById('scan-signal-filter').value;
+
+    let rows = scanResults.filter(r => {
+        // Grade filter
+        if (gradeFilter) {
+            const minOrder = GRADE_ORDER[gradeFilter] || 0;
+            if ((GRADE_ORDER[r.grade] || 0) < minOrder) return false;
+        }
+        // Signal filter
+        if (signalFilter === 'BUY'    && r.signal !== 'BUY')  return false;
+        if (signalFilter === 'SELL'   && r.signal !== 'SELL') return false;
+        if (signalFilter === 'SIGNAL' && r.signal === 'NONE') return false;
+        return true;
+    });
+
+    rows.sort((a, b) => {
+        let av = a[_sortKey], bv = b[_sortKey];
+        if (typeof av === 'string') av = av.toLowerCase();
+        if (typeof bv === 'string') bv = bv.toLowerCase();
+        if (av == null) av = _sortAsc ? Infinity : -Infinity;
+        if (bv == null) bv = _sortAsc ? Infinity : -Infinity;
+        return _sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+    });
+
+    return rows;
+}
+
 // ── Table rendering ───────────────────────────────────────────────────────────
 
-function renderRow(r) {
+function renderAllRows() {
     const tbody = document.getElementById('scan-results-body');
+    tbody.innerHTML = '';
+    const rows = _filteredSorted();
+    if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="12" class="text-center text-base-content/40 py-6 text-sm">No results match the current filters.</td></tr>';
+        return;
+    }
+    rows.forEach(r => _insertRow(r, tbody));
+}
 
+function appendRow(r) {
+    // During live scan: insert signals at top, others at bottom
+    const tbody = document.getElementById('scan-results-body');
     const placeholder = tbody.querySelector('td[colspan]');
     if (placeholder) placeholder.closest('tr').remove();
 
+    const row = _buildRow(r);
+    if (r.signal !== 'NONE') {
+        tbody.insertBefore(row, tbody.firstChild);
+    } else {
+        tbody.appendChild(row);
+    }
+}
+
+function _insertRow(r, tbody) {
+    tbody.appendChild(_buildRow(r));
+}
+
+function _buildRow(r) {
     const signalClass = r.signal === 'BUY'  ? 'text-success font-bold' :
                         r.signal === 'SELL' ? 'text-error font-bold'   : 'text-base-content/40';
     const regimeClass = r.regime === 'BULLISH' ? 'badge-success' :
@@ -133,14 +279,14 @@ function renderRow(r) {
     const rowClass    = r.signal === 'BUY'  ? 'bg-success/5' :
                         r.signal === 'SELL' ? 'bg-error/5'   : '';
 
+    const gradeBadge = _gradeBadge(r.grade, r.score);
+
     const fmt  = (v, dec=2) => v != null ? Number(v).toFixed(dec) : '—';
     const fmtP = (v)        => v != null ? `${v > 0 ? '+' : ''}${Number(v).toFixed(2)}%` : '—';
-
-    const rowId = `row-${r.symbol}`;
-    const detailId = `detail-${r.symbol}`;
+    const rsClass = r.rs_vs_spy != null && r.rs_vs_spy > 0 ? 'text-success' : 'text-error';
 
     const row = document.createElement('tr');
-    row.id        = rowId;
+    row.id        = `row-${r.symbol}`;
     row.className = `hover cursor-pointer ${rowClass}`;
     row.onclick   = () => toggleDetail(r);
 
@@ -153,17 +299,25 @@ function renderRow(r) {
         <td><span class="badge badge-xs ${regimeClass}">${r.regime}</span></td>
         <td class="text-center text-sm">${r.tier_reached}</td>
         <td class="${signalClass} text-sm">${r.signal}</td>
-        <td class="text-sm ${r.rs_vs_spy != null && r.rs_vs_spy > 0 ? 'text-success' : 'text-error'}">${fmtP(r.rs_vs_spy)}</td>
+        <td class="text-sm font-semibold">${r.score != null ? r.score : '—'}</td>
+        <td>${gradeBadge}</td>
+        <td class="text-sm ${rsClass}">${fmtP(r.rs_vs_spy)}</td>
         <td class="text-sm">${fmt(r.rvol)}</td>
         <td class="text-sm">${fmt(r.bb_width_pct, 1)}</td>
         <td class="text-sm">${fmt(r.rsi, 1)}</td>
     `;
 
-    if (r.signal !== 'NONE') {
-        tbody.insertBefore(row, tbody.firstChild);
-    } else {
-        tbody.appendChild(row);
-    }
+    return row;
+}
+
+function _gradeBadge(grade, score) {
+    // "—" means no signal — show a neutral dash, not a grade badge
+    if (!grade || grade === '—') return '<span class="text-base-content/30 text-xs">—</span>';
+    if (grade === 'D') return '<span class="badge badge-xs badge-ghost">D</span>';
+    const cls = grade === 'A' ? 'badge-success' :
+                grade === 'B' ? 'badge-warning'  :
+                grade === 'C' ? 'badge-info'     : 'badge-ghost';
+    return `<span class="badge badge-xs ${cls}">${grade}</span>`;
 }
 
 function toggleDetail(r) {
@@ -191,7 +345,7 @@ function toggleDetail(r) {
         : '';
 
     detail.innerHTML = `
-        <td colspan="10" class="px-6 py-3">
+        <td colspan="12" class="px-6 py-3">
             <div class="flex flex-wrap gap-6 items-start">
                 <div class="flex-1 min-w-48">
                     ${tier1Html}
@@ -211,18 +365,42 @@ function toggleDetail(r) {
     rowEl.insertAdjacentElement('afterend', detail);
 }
 
+// ── Universe selector ─────────────────────────────────────────────────────────
+
+function onListChange() {
+    const sel  = document.getElementById('scan-list-select').value;
+    const wrap = document.getElementById('scan-custom-wrap');
+
+    if (sel === 'custom' || sel.startsWith('saved_')) {
+        wrap.classList.remove('hidden');
+        if (sel.startsWith('saved_')) {
+            const idx = parseInt(sel.replace('saved_', ''), 10);
+            document.getElementById('scan-custom-input').value = savedLists[idx]?.symbols || '';
+        } else {
+            document.getElementById('scan-custom-input').value = '';
+        }
+    } else {
+        wrap.classList.add('hidden');
+    }
+}
+
+// Keep backward-compat alias
+function toggleCustomInput() { onListChange(); }
+
 // ── Saved custom lists ────────────────────────────────────────────────────────
+
+let savedLists = JSON.parse(localStorage.getItem('scanner_saved_lists') || '[]');
 
 function renderSavedLists() {
     const sel = document.getElementById('scan-list-select');
-
-    // Remove any previously injected saved-list options
     sel.querySelectorAll('option[data-saved]').forEach(o => o.remove());
+    sel.querySelectorAll('optgroup[data-saved]').forEach(g => g.remove());
 
     if (!savedLists.length) return;
 
     const group = document.createElement('optgroup');
     group.label = 'Saved Lists';
+    group.dataset.saved = '1';
 
     savedLists.forEach((sl, idx) => {
         const opt = document.createElement('option');
@@ -235,72 +413,11 @@ function renderSavedLists() {
     sel.appendChild(group);
 }
 
-function saveCurrentList() {
-    const raw = document.getElementById('scan-custom-input').value.trim();
-    if (!raw) { showScanStatus('error', 'Enter symbols before saving.'); return; }
-
-    const name = prompt('Name this list:');
-    if (!name || !name.trim()) return;
-
-    savedLists.push({ name: name.trim(), symbols: raw });
-    localStorage.setItem('scanner_saved_lists', JSON.stringify(savedLists));
-    renderSavedLists();
-    showScanStatus('success', `Saved list "${name.trim()}"`);
-}
-
-function deleteSavedList(idx) {
-    savedLists.splice(idx, 1);
-    localStorage.setItem('scanner_saved_lists', JSON.stringify(savedLists));
-    renderSavedLists();
-    // Reset selector to custom if the deleted list was selected
-    const sel = document.getElementById('scan-list-select');
-    if (!sel.value || sel.value.startsWith('saved_')) {
-        sel.value = 'custom';
-        toggleCustomInput();
-    }
-}
-
-function toggleCustomInput() {
-    const sel    = document.getElementById('scan-list-select').value;
-    const wrap   = document.getElementById('scan-custom-wrap');
-    const saveBtn = document.getElementById('scan-save-list-btn');
-
-    if (sel === 'custom') {
-        wrap.classList.remove('hidden');
-        saveBtn.classList.remove('hidden');
-        document.getElementById('scan-custom-input').value = '';
-    } else if (sel.startsWith('saved_')) {
-        const idx = parseInt(sel.replace('saved_', ''), 10);
-        wrap.classList.remove('hidden');
-        saveBtn.classList.add('hidden');
-        document.getElementById('scan-custom-input').value = savedLists[idx]?.symbols || '';
-    } else {
-        wrap.classList.add('hidden');
-        saveBtn.classList.add('hidden');
-    }
-}
-
-// Resolve saved list to custom symbols before scanning
-const _origStartScan = startScan;
-// Override startScan to handle saved_N list values
-(function() {
-    const origStart = startScan;
-    window.startScan = function() {
-        const sel = document.getElementById('scan-list-select').value;
-        if (sel.startsWith('saved_')) {
-            // Treat as custom scan using the saved symbols
-            document.getElementById('scan-list-select').value = 'custom';
-            // symbols already in the input from toggleCustomInput
-        }
-        origStart();
-    };
-})();
-
 // ── Export ────────────────────────────────────────────────────────────────────
 
 function exportCSV() {
     if (!scanResults.length) return;
-    const headers = ['symbol','price','regime','tier_reached','signal','rs_vs_spy','rvol','bb_width_pct','atr_pct_rank','rsi'];
+    const headers = ['symbol','price','regime','tier_reached','signal','score','grade','rs_vs_spy','rvol','bb_width_pct','atr_pct_rank','rsi'];
     const rows    = scanResults.map(r => headers.map(h => r[h] ?? '').join(','));
     const csv     = [headers.join(','), ...rows].join('\n');
     const blob    = new Blob([csv], { type: 'text/csv' });
@@ -320,7 +437,7 @@ function resetUI() {
     document.getElementById('scan-progress-wrap').classList.add('hidden');
     document.getElementById('scan-export-btn').classList.add('hidden');
     document.getElementById('scan-results-body').innerHTML =
-        '<tr><td colspan="10" class="text-center text-base-content/40 py-6 text-sm">Run a scan to see results.</td></tr>';
+        '<tr><td colspan="12" class="text-center text-base-content/40 py-6 text-sm">Run a scan to see results.</td></tr>';
 }
 
 function showScanStatus(type, msg) {
@@ -330,8 +447,56 @@ function showScanStatus(type, msg) {
     setTimeout(() => { el.innerHTML = ''; }, 5000);
 }
 
+// ── Universe ──────────────────────────────────────────────────────────────────
+
+async function checkUniverseInfo() {
+    try {
+        const res = await fetch('/api/scan/universe/info');
+        if (!res.ok) return;
+        const info = await res.json();
+
+        const popoverBtn = document.getElementById('universe-popover-btn');
+        const label      = document.getElementById('universe-btn-label');
+        const detail     = document.getElementById('universe-detail-text');
+
+        if (info.cached) {
+            label.textContent = `${info.count.toLocaleString()} symbols`;
+            detail.textContent = `Fetched from Alpaca ${info.age_hours}h ago.${info.stale ? ' Cache is stale — consider refreshing.' : ''}`;
+        } else {
+            label.textContent = 'Universe';
+            detail.textContent = `Using static fallback (${info.count} symbols). Refresh to fetch the full Alpaca ticker list.`;
+        }
+        popoverBtn.classList.remove('hidden');
+    } catch (_) {}
+}
+
+async function refreshUniverse() {
+    const btn = document.getElementById('refresh-universe-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span> Fetching…';
+    try {
+        const res = await fetch('/api/scan/universe/refresh', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+            showScanStatus('success', `Universe refreshed — ${data.count.toLocaleString()} symbols cached.`);
+            checkUniverseInfo();
+            // Close dropdown
+            document.activeElement?.blur();
+        } else {
+            showScanStatus('error', data.error || 'Universe refresh failed.');
+        }
+    } catch (e) {
+        showScanStatus('error', `Universe refresh failed: ${e.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Refresh from Alpaca';
+    }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
     renderSavedLists();
+    checkCache();
+    checkUniverseInfo();
 });

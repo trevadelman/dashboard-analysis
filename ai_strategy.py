@@ -90,6 +90,31 @@ class AIStrategyGenerator:
                 'signals': []
             }
 
+    def stream_analysis(self, prompt: str):
+        """
+        Stream a plain-text AI response for an arbitrary prompt.
+        Yields text chunks as they arrive from the model.
+
+        Used by the Market Pulse endpoint to stream market commentary.
+        """
+        try:
+            stream = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                    {"role": "system", "content": "You are a quantitative market analyst. Be direct, concise, and actionable."},
+                    {"role": "user", "content": prompt},
+                ],
+                temperature=0.3,
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    yield delta.content
+        except Exception as e:
+            logger.error(f"AI stream error: {e}")
+            yield f"[AI unavailable: {e}]"
+
     def get_ai_commentary(self, data, symbol, audit):
         """
         Generate plain-English commentary on the full analysis audit trail.
