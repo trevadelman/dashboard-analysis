@@ -1,0 +1,201 @@
+{% extends "layout.html" %}
+
+{% block title %}Analysis Dashboard — Alpaca Trading{% endblock %}
+
+{% block head %}
+<style>
+    :root { --sidebar-width: 300px; --right-sidebar-width: 320px; }
+    .sidebar       { width: var(--sidebar-width); position: fixed; top: 64px; bottom: 0; left: 0; overflow-y: auto; z-index: 40; }
+    .right-sidebar { width: var(--right-sidebar-width); position: fixed; top: 64px; bottom: 0; right: 0; overflow-y: auto; z-index: 40; }
+    .main-content  { margin-left: var(--sidebar-width); margin-right: var(--right-sidebar-width); padding: 1.5rem; }
+    #chart-container { height: 500px; width: 100%; position: relative; }
+    #loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 2000; }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
+    .rotate-180 { transform: rotate(180deg); }
+</style>
+{% endblock %}
+
+{% block body_prefix %}
+<div id="loading-overlay">
+    <span class="loading loading-spinner loading-lg text-primary"></span>
+</div>
+{% endblock %}
+
+{% block navbar_right %}
+<!-- Alpaca connection status dot — opens Settings modal on Alpaca tab -->
+<button class="btn btn-ghost btn-sm gap-2" onclick="document.getElementById('settings-modal').showModal(); loadSettings();" title="Settings">
+    <span id="alpaca-status-dot" class="inline-block w-2.5 h-2.5 rounded-full bg-error shadow-sm shadow-error"></span>
+    <span id="alpaca-profile-label" class="text-xs hidden sm:inline">Settings</span>
+    <i class="bi bi-gear-fill text-lg"></i>
+</button>
+{% endblock %}
+
+{% block content %}
+    <!-- Left Sidebar: Account & Strategy Settings -->
+    <div class="sidebar bg-base-200 p-4">
+        <div class="card bg-base-100 shadow-xl mb-4">
+            <div class="card-body p-4">
+                <h2 class="card-title text-sm">Account Summary</h2>
+                <div class="space-y-3">
+                    <div>
+                        <div class="text-xs text-base-content/60 mb-1">Equity</div>
+                        <div id="equity" class="text-2xl font-bold">$0.00</div>
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <div class="text-xs text-base-content/60 mb-1">Cash</div>
+                            <div id="cash" class="text-sm font-semibold">$0.00</div>
+                        </div>
+                        <div>
+                            <div class="text-xs text-base-content/60 mb-1">Buying Power</div>
+                            <div id="buying_power" class="text-sm font-semibold">$0.00</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body p-4">
+                <h2 class="card-title text-sm mb-2">Strategy Settings</h2>
+
+                <!-- Momentum Presets -->
+                <div class="mb-3">
+                    <div class="text-xs text-base-content/60 mb-2 font-semibold uppercase">Quick Presets</div>
+                    <div class="flex flex-wrap gap-1" id="momentum_preset_buttons">
+                        <button class="btn btn-outline btn-xs momentum-preset-btn" data-preset="breakout"    onclick="applyMomentumPreset('breakout')">🚀 Breakout</button>
+                        <button class="btn btn-outline btn-xs momentum-preset-btn" data-preset="mean_revert" onclick="applyMomentumPreset('mean_revert')">↩️ Mean Revert</button>
+                        <button class="btn btn-outline btn-xs momentum-preset-btn" data-preset="trend"       onclick="applyMomentumPreset('trend')">📈 Trend Follow</button>
+                        <button class="btn btn-outline btn-xs momentum-preset-btn" data-preset="scalp"       onclick="applyMomentumPreset('scalp')">⚡ Scalp</button>
+                    </div>
+                    <div id="momentum_preset_desc" class="text-xs text-base-content/60 mt-1 italic"></div>
+                </div>
+
+                <!-- Momentum Settings -->
+                <div class="collapse collapse-arrow bg-base-200 mb-2">
+                    <input type="checkbox" />
+                    <div class="collapse-title text-sm font-medium">
+                        <i class="bi bi-speedometer2"></i> Momentum (RSI)
+                    </div>
+                    <div class="collapse-content">
+                        <div id="settings-momentum" class="space-y-3 pt-2"></div>
+                    </div>
+                </div>
+
+                <!-- Risk Settings -->
+                <div class="collapse collapse-arrow bg-base-200 mb-2">
+                    <input type="checkbox" />
+                    <div class="collapse-title text-sm font-medium">
+                        <i class="bi bi-shield-check"></i> Risk Management
+                    </div>
+                    <div class="collapse-content">
+                        <div id="settings-risk" class="space-y-3 pt-2"></div>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary w-full mt-3" onclick="updateConfig()">
+                    Save Configuration
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content: Chart & Analysis -->
+    <div class="main-content">
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body p-0">
+                <div class="flex justify-between items-center p-4 border-b border-base-300">
+                    <h2 class="card-title text-lg">
+                        <i class="bi bi-graph-up"></i> Market Analysis
+                    </h2>
+                    <div class="flex gap-2">
+                        <input type="text" id="symbol-input" class="input input-bordered input-sm w-24" value="SPY">
+                        <select id="interval-input" class="select select-bordered select-sm w-20" onchange="loadChart()">
+                            <option value="1d">1D</option>
+                            <option value="1h">1H</option>
+                            <option value="15m">15m</option>
+                            <option value="5m">5m</option>
+                            <option value="1m">1m</option>
+                        </select>
+                        <button class="btn btn-primary btn-sm" onclick="runAnalysis()">Analyze</button>
+                    </div>
+                </div>
+                <div id="chart-container"></div>
+                <div class="p-4 bg-base-200 border-t border-base-300">
+                    <div id="analysis-results-content">
+                        <div class="text-center text-base-content/60 py-8">
+                            Enter a symbol and click Analyze to see multi-timeframe breakdown
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Sidebar: Positions & Trades -->
+    <div class="right-sidebar bg-base-200 p-4">
+        <div class="card bg-base-100 shadow-xl mb-4">
+            <div class="card-body p-4">
+                <div class="flex justify-between items-center mb-3">
+                    <h2 class="card-title text-sm">Positions</h2>
+                    <div class="badge badge-primary" id="positions-count">0</div>
+                </div>
+                <div id="positions-list">
+                    <div class="text-center text-base-content/60 text-sm py-3">No open positions</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bg-base-100 shadow-xl">
+            <div class="card-body p-4">
+                <h2 class="card-title text-sm mb-3">Recent Trades</h2>
+                <div id="trades-list">
+                    <div class="text-center text-base-content/60 text-sm py-3">No trade history</div>
+                </div>
+            </div>
+        </div>
+    </div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/chart.js"></script>
+<script src="/static/js/account.js"></script>
+<script src="/static/js/config.js"></script>
+<script src="/static/js/analysis.js"></script>
+<script>
+    // ── Alpaca connection status dot ──────────────────────────────────────────
+
+    function setAlpacaStatus(connected, profileName) {
+        const dot   = document.getElementById('alpaca-status-dot');
+        const label = document.getElementById('alpaca-profile-label');
+        if (dot) {
+            dot.className = connected
+                ? 'inline-block w-2.5 h-2.5 rounded-full bg-success shadow-sm shadow-success'
+                : 'inline-block w-2.5 h-2.5 rounded-full bg-error shadow-sm shadow-error';
+        }
+        if (label && profileName) label.textContent = profileName;
+    }
+
+    async function initProfileStatus() {
+        try {
+            const res      = await fetch('/api/profiles');
+            const profiles = await res.json();
+            const active   = profiles.find(p => p.is_active);
+            if (active) {
+                setAlpacaStatus(true, active.name);
+            } else {
+                // No active profile — dot stays red, auto-open Settings on Alpaca tab
+                setAlpacaStatus(false, 'Settings');
+                setTimeout(() => {
+                    document.getElementById('settings-modal').showModal();
+                    loadSettings();
+                }, 400);
+            }
+        } catch (_) {
+            setAlpacaStatus(false, 'Settings');
+        }
+    }
+
+    window.onload = () => { initChart(); refreshAll(); initProfileStatus(); };
+</script>
+{% endblock %}

@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="cupcake">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Alpaca Trading{% endblock %}</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.7.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.0/font/bootstrap-icons.css">
+    <script src="https://unpkg.com/lightweight-charts@3.8.0/dist/lightweight-charts.standalone.production.js"></script>
+    {% block head %}{% endblock %}
+</head>
+<body>
+    {% block body_prefix %}{% endblock %}
+
+    <!-- Settings modal -->
+    <dialog id="settings-modal" class="modal">
+        <div class="modal-box w-11/12 max-w-2xl">
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+            </form>
+            <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
+                <i class="bi bi-gear-fill text-primary"></i> Settings
+            </h3>
+
+            <!-- Tabs -->
+            <div role="tablist" class="tabs tabs-bordered mb-5">
+                <a role="tab" class="tab tab-active" id="tab-alpaca" onclick="switchSettingsTab('alpaca')">
+                    <i class="bi bi-key mr-1"></i> Alpaca
+                </a>
+                <a role="tab" class="tab" id="tab-ai" onclick="switchSettingsTab('ai')">
+                    <i class="bi bi-cpu mr-1"></i> AI
+                </a>
+                <a role="tab" class="tab" id="tab-app" onclick="switchSettingsTab('app')">
+                    <i class="bi bi-sliders mr-1"></i> App
+                </a>
+            </div>
+
+            <!-- ── Tab: Alpaca Accounts ─────────────────────────────────────── -->
+            <div id="settings-panel-alpaca">
+                <!-- Saved profiles -->
+                <div id="profiles-list" class="space-y-2 mb-4"></div>
+
+                <div class="divider text-xs my-3">Add / Update Profile</div>
+
+                <div class="space-y-3">
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs font-medium">Profile Name</span></label>
+                        <input id="profile-name" type="text" placeholder="e.g. Paper Account" class="input input-bordered input-sm" />
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs font-medium">API Key</span></label>
+                            <input id="profile-api-key" type="text" placeholder="PK…" class="input input-bordered input-sm font-mono" />
+                        </div>
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs font-medium">Secret Key</span></label>
+                            <input id="profile-secret-key" type="password" placeholder="••••••••" class="input input-bordered input-sm font-mono" />
+                        </div>
+                    </div>
+                    <label class="label cursor-pointer justify-start gap-3 py-0">
+                        <input id="profile-paper" type="checkbox" class="checkbox checkbox-sm checkbox-primary" checked />
+                        <span class="label-text text-xs">Paper trading</span>
+                    </label>
+                    <div class="flex gap-2 pt-1">
+                        <button class="btn btn-primary btn-sm flex-1" onclick="saveProfile(true)">
+                            <i class="bi bi-lightning-fill"></i> Save &amp; Activate
+                        </button>
+                        <button class="btn btn-ghost btn-sm" onclick="saveProfile(false)">Save only</button>
+                    </div>
+                    <div id="profile-status" class="text-xs min-h-[1rem]"></div>
+                </div>
+            </div>
+
+            <!-- ── Tab: AI Provider ────────────────────────────────────────── -->
+            <div id="settings-panel-ai" class="hidden space-y-4">
+
+                <!-- Provider presets -->
+                <div>
+                    <p class="text-xs text-base-content/50 mb-3">Choose a provider or configure manually below.</p>
+                    <div class="grid grid-cols-2 gap-3">
+                        <!-- Ollama card -->
+                        <button class="card bg-base-200 border-2 border-transparent hover:border-primary transition-colors p-3 text-left"
+                                id="preset-ollama" onclick="applyAiPreset('ollama')">
+                            <div class="flex items-center gap-2 mb-1">
+                                <i class="bi bi-hdd-stack text-primary text-lg"></i>
+                                <span class="font-semibold text-sm">Ollama</span>
+                                <span class="badge badge-xs badge-ghost">Local</span>
+                            </div>
+                            <p class="text-xs text-base-content/50">Runs on your machine. No API key needed.</p>
+                        </button>
+                        <!-- DeepSeek card -->
+                        <button class="card bg-base-200 border-2 border-transparent hover:border-primary transition-colors p-3 text-left"
+                                id="preset-deepseek" onclick="applyAiPreset('deepseek')">
+                            <div class="flex items-center gap-2 mb-1">
+                                <i class="bi bi-cloud text-secondary text-lg"></i>
+                                <span class="font-semibold text-sm">DeepSeek</span>
+                                <span class="badge badge-xs badge-ghost">Cloud</span>
+                            </div>
+                            <p class="text-xs text-base-content/50">API key required. Fast &amp; cheap.</p>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="divider text-xs my-1">Configuration</div>
+
+                <div class="space-y-3">
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs font-medium">Endpoint URL</span></label>
+                        <input id="setting-ai-base-url" type="text" placeholder="http://localhost:11434/v1"
+                               class="input input-bordered input-sm font-mono" />
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs font-medium">API Key</span></label>
+                            <input id="setting-ai-api-key" type="password" placeholder="ollama"
+                                   class="input input-bordered input-sm font-mono" />
+                        </div>
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs font-medium">Model</span></label>
+                            <input id="setting-ai-model" type="text" placeholder="gemma3:4b-it-qat"
+                                   class="input input-bordered input-sm font-mono" />
+                        </div>
+                    </div>
+                    <div class="flex gap-3 items-center pt-1">
+                        <button class="btn btn-primary btn-sm" onclick="saveAiSettings()">
+                            <i class="bi bi-save"></i> Save
+                        </button>
+                        <button class="btn btn-ghost btn-sm gap-1" onclick="testAiConnection()">
+                            <i class="bi bi-wifi"></i> Test
+                        </button>
+                        <span id="ai-test-result" class="text-xs"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ── Tab: App Settings ───────────────────────────────────────── -->
+            <div id="settings-panel-app" class="hidden space-y-5">
+
+                <!-- Risk -->
+                <div>
+                    <h4 class="text-xs font-semibold text-base-content/60 uppercase tracking-wider mb-3">Risk Management</h4>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs font-medium">Max Positions</span></label>
+                            <input id="setting-max-positions" type="number" min="1" max="50" class="input input-bordered input-sm" />
+                        </div>
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs font-medium">Risk % per Trade</span></label>
+                            <input id="setting-risk-pct" type="number" min="0.1" max="10" step="0.1" class="input input-bordered input-sm" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Password -->
+                <div>
+                    <h4 class="text-xs font-semibold text-base-content/60 uppercase tracking-wider mb-1">Dashboard Password</h4>
+                    <p class="text-xs text-base-content/40 mb-3">Leave blank to run passwordless (local use only).</p>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs font-medium">New Password</span></label>
+                            <input id="setting-password" type="password" placeholder="Leave blank = no password" class="input input-bordered input-sm" />
+                        </div>
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs font-medium">Confirm</span></label>
+                            <input id="setting-password-confirm" type="password" placeholder="Confirm" class="input input-bordered input-sm" />
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex gap-2 items-center">
+                    <button class="btn btn-primary btn-sm" onclick="saveAppSettings()">
+                        <i class="bi bi-save"></i> Save Settings
+                    </button>
+                    <span id="app-settings-status" class="text-xs min-h-[1rem]"></span>
+                </div>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- Drawer wrapper -->
+    <div class="drawer">
+        <input id="nav-drawer" type="checkbox" class="drawer-toggle" />
+
+        <!-- Page content -->
+        <div class="drawer-content flex flex-col">
+
+            <!-- Navbar -->
+            <div class="navbar bg-base-300 shadow-lg sticky top-0 z-50">
+                <div class="flex-none">
+                    <label for="nav-drawer" class="btn btn-ghost btn-circle drawer-button">
+                        <i class="bi bi-list text-2xl"></i>
+                    </label>
+                </div>
+                <div class="flex-1">
+                    <span class="text-xl font-bold px-2 flex items-center gap-2">
+                        <i class="bi bi-cpu-fill"></i>
+                        Alpaca Trading
+                    </span>
+                </div>
+                <div class="flex-none gap-2">
+                    {% block navbar_right %}
+                    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('settings-modal').showModal(); loadSettings();" title="Settings">
+                        <i class="bi bi-gear-fill text-lg"></i>
+                    </button>
+                    {% endblock %}
+                </div>
+            </div>
+
+            <!-- Page-specific content -->
+            {% block content %}{% endblock %}
+
+        </div><!-- end drawer-content -->
+
+        <!-- Drawer sidebar -->
+        <div class="drawer-side z-50">
+            <label for="nav-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
+            <ul class="menu bg-base-200 min-h-full w-72 p-4 gap-1">
+                <li class="menu-title text-xs uppercase tracking-widest text-base-content/50 mb-2">Navigation</li>
+                <li>
+                    <a href="/" class="{{ 'active font-semibold' if active_page == 'dashboard' else '' }}">
+                        <i class="bi bi-speedometer2 text-lg"></i>
+                        Analysis Dashboard
+                    </a>
+                </li>
+                <li>
+                    <a href="/scanner" class="{{ 'active font-semibold' if active_page == 'scanner' else '' }}">
+                        <i class="bi bi-funnel text-lg"></i>
+                        Market Scanner
+                    </a>
+                </li>
+                <div class="divider my-2"></div>
+                <li>
+                    <a href="#" onclick="document.getElementById('settings-modal').showModal(); loadSettings(); document.getElementById('nav-drawer').checked = false;" class="text-base-content/70">
+                        <i class="bi bi-gear text-lg"></i>
+                        Settings
+                    </a>
+                </li>
+            </ul>
+        </div>
+    </div><!-- end drawer -->
+
+    {% block scripts %}{% endblock %}
+    <script src="/static/js/settings.js"></script>
+</body>
+</html>
