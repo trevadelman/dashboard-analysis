@@ -9,6 +9,7 @@ PyYAML>=6.0.0
 requests>=2.32.0
 urllib3>=1.26.0,<2
 websocket-client>=1.8.0,<2
+websockets>=12.0
 
 # ── Data & Analysis ───────────────────────────────────────────────────────────
 pandas>=2.2.0
