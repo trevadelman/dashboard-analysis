@@ -63,11 +63,14 @@ dashboard-analysis/
 
 ### 1. Clone and create a virtual environment
 
+> **Strongly recommended:** use a virtual environment. Installing into the global Python environment can cause dependency conflicts, especially with `alpaca-trade-api`'s pinned packages.
+
 ```bash
-git clone https://github.com/trevoradelman/dashboard-analysis
+git clone https://github.com/trevadelman/dashboard-analysis
 cd dashboard-analysis
 python3 -m venv venv
-source venv/bin/activate
+source venv/bin/activate        # macOS / Linux
+# venv\Scripts\activate         # Windows
 pip install -r requirements.txt
 ```
 
@@ -152,6 +155,36 @@ The market scanner runs Tier 1 + Tier 2 only (no AI) for speed. Results stream v
 **Symbol lists:** S&P 500 Top 100, NASDAQ 100 Top 50, Sector ETFs, Russell 2000 Sample, or a custom comma-separated list. Custom lists can be named and saved in the browser.
 
 Click any result row to expand the Tier 1/2 reasoning inline. Use "Open in Dashboard" to navigate to the full multi-timeframe analysis for that symbol.
+
+---
+
+## Troubleshooting
+
+### `pip install` fails with dependency conflicts
+
+`alpaca-trade-api` pins `urllib3<2`, which can conflict with other packages — especially if installing into a global Python environment. **Always use a virtual environment** (see Setup step 1).
+
+If you still hit conflicts, try installing in two steps:
+
+```bash
+pip install -r requirements.txt --no-deps
+pip install alpaca-trade-api
+```
+
+Or install `alpaca-trade-api` last:
+
+```bash
+pip install fastapi uvicorn openai cryptography pandas numpy yfinance python-dotenv jinja2 python-multipart itsdangerous starlette
+pip install alpaca-trade-api
+```
+
+### App starts but Alpaca data doesn't load
+
+Open Settings → Alpaca and add your credentials. The app starts without them intentionally — account/positions/orders will be empty until a profile is activated.
+
+### AI analysis returns nothing / times out
+
+Make sure Ollama is running (`ollama serve`) and the model is pulled (`ollama pull gemma3:4b-it-qat`). You can verify the connection in Settings → AI → Test.
 
 ---
 
