@@ -1,7 +1,18 @@
-# ── Alpaca ────────────────────────────────────────────────────────────────────
-alpaca-trade-api>=3.2.0
+# ── Install instructions ──────────────────────────────────────────────────────
+# alpaca-trade-api pins websockets<11, but yfinance requires websockets>=13.
+# Install alpaca-trade-api with --no-deps first, then install everything else.
+# This lets yfinance pull in websockets>=13 without the constraint blocking it.
+# alpaca-trade-api works fine at runtime with websockets 13+ despite the pin.
+#
+#   pip install --no-deps alpaca-trade-api==3.2.0
+#   pip install -r requirements.txt
+#
+# ─────────────────────────────────────────────────────────────────────────────
 
-# alpaca-trade-api runtime deps
+# ── Alpaca ────────────────────────────────────────────────────────────────────
+alpaca-trade-api==3.2.0
+
+# alpaca-trade-api runtime deps (installed explicitly since we use --no-deps above)
 aiohttp>=3.11.0
 deprecation>=2.1.0
 msgpack>=1.0.0
@@ -9,7 +20,6 @@ PyYAML>=6.0.0
 requests>=2.32.0
 urllib3>=1.26.0,<2
 websocket-client>=1.8.0,<2
-websockets>=12.0
 
 # ── Data & Analysis ───────────────────────────────────────────────────────────
 pandas>=2.2.0
