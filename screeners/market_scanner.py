@@ -15,12 +15,13 @@ from datetime import datetime, timedelta
 from typing import Generator
 
 import pandas as pd
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
 from alpaca.data.enums import DataFeed
 
 from analysis.indicators import TechnicalIndicators
+from analysis.asset_type import AssetType, classify_symbol
 from screeners.symbol_lists import (
     SP500_TOP100,
     NASDAQ100_TOP50,
@@ -28,6 +29,7 @@ from screeners.symbol_lists import (
     RUSSELL2000_SAMPLE,
     SECTORS,
     ALL_SECTOR_SYMBOLS,
+    CRYPTO_TOP10,
     load_cached_universe,
 )
 from strategies.momentum import SignalHierarchy, TIMEFRAME_CONFIG
@@ -44,6 +46,7 @@ SYMBOL_LISTS = {
     "russell2000":     RUSSELL2000_SAMPLE,
     "all_sectors":     ALL_SECTOR_SYMBOLS,
     "all_universe":    None,   # resolved dynamically from cache at scan time
+    "crypto_top10":    CRYPTO_TOP10,
 }
 
 # Number of symbols to fetch in a single Alpaca bars request.
@@ -64,9 +67,11 @@ class MarketScanner:
     reducing total API calls by ~50x compared to one-symbol-at-a-time fetching.
     """
 
-    def __init__(self, data_client: StockHistoricalDataClient):
-        self._data_client = data_client
-        self._spy_data: pd.DataFrame = pd.DataFrame()
+    def __init__(self, data_client: StockHistoricalDataClient,
+                 crypto_client: CryptoHistoricalDataClient = None):
+        self._data_client  = data_client
+        self._crypto_client = crypto_client
+        self._benchmark_data: pd.DataFrame = pd.DataFrame()
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -99,11 +104,22 @@ class MarketScanner:
         signals  = 0
         start_ts = time.time()
 
+        # Determine whether this is a crypto or equity scan from the first symbol.
+        is_crypto_scan = bool(symbols) and classify_symbol(symbols[0]) == AssetType.CRYPTO
+
         yield self._event({"type": "start", "total": total, "list": list_name, "timeframe": timeframe})
 
-        # Fetch SPY once as the benchmark for relative strength
-        spy_batch = self._fetch_bars_batch(["SPY"], timeframe=timeframe)
-        self._spy_data = spy_batch.get("SPY", pd.DataFrame())
+        # Fetch the benchmark once for relative strength.
+        # Equity scans use SPY; crypto scans use BTC/USD (or skip if BTC is the list).
+        if is_crypto_scan:
+            if symbols[0].upper() != "BTC/USD" and self._crypto_client:
+                btc_batch = self._fetch_crypto_bars_batch(["BTC/USD"], timeframe=timeframe)
+                self._benchmark_data = btc_batch.get("BTC/USD", pd.DataFrame())
+            else:
+                self._benchmark_data = pd.DataFrame()
+        else:
+            spy_batch = self._fetch_bars_batch(["SPY"], timeframe=timeframe)
+            self._benchmark_data = spy_batch.get("SPY", pd.DataFrame())
         time.sleep(_REQUEST_INTERVAL)
 
         # Process symbols in batches
@@ -111,7 +127,10 @@ class MarketScanner:
             batch = symbols[batch_start : batch_start + _BATCH_SIZE]
 
             # Fetch all bars in the batch with a single API call
-            bars_by_symbol = self._fetch_bars_batch(batch, timeframe=timeframe)
+            if is_crypto_scan:
+                bars_by_symbol = self._fetch_crypto_bars_batch(batch, timeframe=timeframe)
+            else:
+                bars_by_symbol = self._fetch_bars_batch(batch, timeframe=timeframe)
             time.sleep(_REQUEST_INTERVAL)
 
             for symbol in batch:
@@ -276,7 +295,7 @@ class MarketScanner:
             return None
 
         try:
-            bars = TechnicalIndicators.calculate_all(bars, spy_data=self._spy_data)
+            bars = TechnicalIndicators.calculate_all(bars, benchmark_data=self._benchmark_data)
         except Exception as e:
             logger.debug(f"Indicator error for {symbol}: {e}")
             return None
@@ -464,6 +483,64 @@ class MarketScanner:
             grade = "D"
 
         return total, grade
+
+    def _fetch_crypto_bars_batch(self, symbols: list, timeframe: str = "long") -> dict:
+        """
+        Fetch bars for a batch of crypto symbols using CryptoHistoricalDataClient.
+
+        Returns a dict mapping symbol → DataFrame (empty DataFrame if no data).
+        Bar interval and lookback days are resolved from TIMEFRAME_CONFIG.
+        """
+        from datetime import timezone
+        from alpaca.data.timeframe import TimeFrameUnit
+
+        result = {sym: pd.DataFrame() for sym in symbols}
+
+        if not self._crypto_client:
+            logger.debug("No crypto client available — skipping crypto batch fetch")
+            return result
+
+        cfg      = TIMEFRAME_CONFIG.get(timeframe, TIMEFRAME_CONFIG["long"])
+        interval = cfg["interval"]
+        days     = cfg["days"]
+        tf_obj   = {
+            "1d":  TimeFrame.Day,
+            "1h":  TimeFrame.Hour,
+            "15m": TimeFrame(15, TimeFrameUnit.Minute),
+        }.get(interval, TimeFrame.Day)
+
+        try:
+            end   = datetime.now(timezone.utc)
+            start = end - timedelta(days=days)
+            request = CryptoBarsRequest(
+                symbol_or_symbols=symbols,
+                timeframe=tf_obj,
+                start=start,
+                end=end,
+                limit=10000,
+            )
+            bars_df = self._crypto_client.get_crypto_bars(request).df
+            if bars_df.empty:
+                return result
+
+            if isinstance(bars_df.index, pd.MultiIndex):
+                bars_df.columns = [c.lower() for c in bars_df.columns]
+                for sym in symbols:
+                    try:
+                        sym_bars = bars_df.xs(sym, level=0)
+                        if not sym_bars.empty:
+                            result[sym] = sym_bars
+                    except KeyError:
+                        pass
+            else:
+                bars_df.columns = [c.lower() for c in bars_df.columns]
+                if symbols:
+                    result[symbols[0]] = bars_df
+
+        except Exception as e:
+            logger.debug(f"Crypto batch fetch error for {len(symbols)} symbols: {e}")
+
+        return result
 
     @staticmethod
     def _event(payload: dict) -> str:

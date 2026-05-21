@@ -4,8 +4,8 @@ Automated trading with Alpaca API, technical analysis, and AI strategy generatio
 """
 
 from alpaca.trading.client import TradingClient
-from alpaca.data.historical import StockHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest
+from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
+from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
@@ -17,6 +17,7 @@ import logging
 import time
 
 from analysis.indicators import TechnicalIndicators
+from analysis.asset_type import AssetType, classify_symbol
 from ai_strategy import AIStrategyGenerator
 from strategies.momentum import SignalHierarchy, TIMEFRAME_CONFIG
 from config import Config
@@ -44,9 +45,14 @@ class TradingBot:
                 api_key=config.ALPACA_API_KEY,
                 secret_key=config.ALPACA_SECRET_KEY,
             )
+            self.crypto_client = CryptoHistoricalDataClient(
+                api_key=config.ALPACA_API_KEY,
+                secret_key=config.ALPACA_SECRET_KEY,
+            )
         else:
             self.trading_client = None
             self.data_client = None
+            self.crypto_client = None
             logger.warning("No Alpaca credentials — bot started without API connection")
 
         # Initialize AI strategy generator (OpenAI-compatible: Ollama locally, DeepSeek in prod)
@@ -78,15 +84,15 @@ class TradingBot:
     def get_market_data(self, symbol, period='1y', interval='1d'):
         """
         Get historical market data with caching.
-        Uses Alpaca for all intervals. Works from any residential/local IP.
+        Routes to the equity or crypto data client based on the symbol.
 
         Args:
-            symbol (str): Stock symbol
+            symbol (str): Stock or crypto symbol (e.g. 'AAPL' or 'BTC/USD')
             period (str): Lookback period (1mo, 3mo, 6mo, 1y, 2y)
             interval (str): Data interval (1d, 1h, 15m, 5m, 1m)
 
         Returns:
-            pandas.DataFrame: Historical OHLCV data with indicators and patterns
+            pandas.DataFrame: Historical OHLCV data with indicators
         """
         if not self._require_api():
             return pd.DataFrame()
@@ -99,80 +105,134 @@ class TradingBot:
                 return cached_data
 
         try:
-            tf_map = {
-                '1d':  TimeFrame.Day,
-                '1h':  TimeFrame.Hour,
-                '15m': TimeFrame(15, TimeFrameUnit.Minute),
-                '5m':  TimeFrame(5, TimeFrameUnit.Minute),
-                '1m':  TimeFrame.Minute,
-            }
-            period_days = {
-                '1mo': 30, '2w': 14, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730, '5d': 5,
-            }
-            tf   = tf_map.get(interval, TimeFrame.Day)
-            days = period_days.get(period, 365)
-
-            end   = datetime.now()
-            start = end - timedelta(days=days)
-
-            request = StockBarsRequest(
-                symbol_or_symbols=symbol,
-                timeframe=tf,
-                start=start,
-                end=end,
-                limit=10000,
-                feed=DataFeed.IEX,
-            )
-            bars = self.data_client.get_stock_bars(request).df
-
-            if bars.empty:
-                logger.warning(f"No data returned for {symbol}")
-                return pd.DataFrame()
-
-            # alpaca-py returns a MultiIndex (symbol, timestamp) — drop the symbol level
-            if isinstance(bars.index, pd.MultiIndex):
-                bars = bars.droplevel(0)
-
-            # Standardize column names to lowercase
-            bars.columns = [c.lower() for c in bars.columns]
-
-            # Fetch SPY for relative strength if this isn't SPY itself
-            spy_data = pd.DataFrame()
-            if symbol.upper() != 'SPY':
-                try:
-                    spy_request = StockBarsRequest(
-                        symbol_or_symbols='SPY',
-                        timeframe=tf,
-                        start=start,
-                        end=end,
-                        limit=10000,
-                        feed=DataFeed.IEX,
-                    )
-                    spy_bars = self.data_client.get_stock_bars(spy_request).df
-                    if not spy_bars.empty:
-                        if isinstance(spy_bars.index, pd.MultiIndex):
-                            spy_bars = spy_bars.droplevel(0)
-                        spy_bars.columns = [c.lower() for c in spy_bars.columns]
-                        spy_data = spy_bars
-                except Exception:
-                    pass  # RS vs SPY will be NaN — non-fatal
-
-            bars = TechnicalIndicators.calculate_all(bars, spy_data=spy_data)
+            if classify_symbol(symbol) == AssetType.CRYPTO:
+                bars = self._get_crypto_data(symbol, period, interval)
+            else:
+                bars = self._get_equity_data(symbol, period, interval)
 
             self._data_cache[cache_key] = (bars, time.time())
-
-            logger.info(f"Retrieved {len(bars)} bars for {symbol} via Alpaca")
             return bars
 
         except Exception as e:
             logger.error(f"Error getting market data for {symbol}: {e}")
-
             if cache_key in self._data_cache:
                 logger.info(f"Using stale cached data for {symbol} due to error")
                 cached_data, _ = self._data_cache[cache_key]
                 return cached_data
-
             return pd.DataFrame()
+
+    def _build_timeframe(self, interval: str):
+        """Map interval string to Alpaca TimeFrame object."""
+        tf_map = {
+            '1d':  TimeFrame.Day,
+            '1h':  TimeFrame.Hour,
+            '15m': TimeFrame(15, TimeFrameUnit.Minute),
+            '5m':  TimeFrame(5, TimeFrameUnit.Minute),
+            '1m':  TimeFrame.Minute,
+        }
+        return tf_map.get(interval, TimeFrame.Day)
+
+    def _build_date_range(self, period: str):
+        """Return (start, end) datetime pair for the given period string."""
+        period_days = {
+            '1mo': 30, '2w': 14, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730, '5d': 5,
+        }
+        end   = datetime.now()
+        start = end - timedelta(days=period_days.get(period, 365))
+        return start, end
+
+    def _normalize_bars(self, bars) -> pd.DataFrame:
+        """Drop MultiIndex symbol level and lowercase column names."""
+        if isinstance(bars.index, pd.MultiIndex):
+            bars = bars.droplevel(0)
+        bars.columns = [c.lower() for c in bars.columns]
+        return bars
+
+    def _get_equity_data(self, symbol: str, period: str, interval: str) -> pd.DataFrame:
+        """Fetch equity bars from Alpaca and calculate indicators with SPY benchmark."""
+        tf    = self._build_timeframe(interval)
+        start, end = self._build_date_range(period)
+
+        request = StockBarsRequest(
+            symbol_or_symbols=symbol,
+            timeframe=tf,
+            start=start,
+            end=end,
+            limit=10000,
+            feed=DataFeed.IEX,
+        )
+        bars = self.data_client.get_stock_bars(request).df
+        if bars.empty:
+            logger.warning(f"No equity data returned for {symbol}")
+            return pd.DataFrame()
+        bars = self._normalize_bars(bars)
+
+        # Fetch SPY as the RS benchmark
+        benchmark_data = pd.DataFrame()
+        if symbol.upper() != 'SPY':
+            try:
+                spy_req = StockBarsRequest(
+                    symbol_or_symbols='SPY',
+                    timeframe=tf,
+                    start=start,
+                    end=end,
+                    limit=10000,
+                    feed=DataFeed.IEX,
+                )
+                spy_bars = self.data_client.get_stock_bars(spy_req).df
+                if not spy_bars.empty:
+                    benchmark_data = self._normalize_bars(spy_bars)
+            except Exception:
+                pass  # RS vs SPY will be NaN — non-fatal
+
+        bars = TechnicalIndicators.calculate_all(bars, benchmark_data=benchmark_data)
+        logger.info(f"Retrieved {len(bars)} equity bars for {symbol}")
+        return bars
+
+    def _get_crypto_data(self, symbol: str, period: str, interval: str) -> pd.DataFrame:
+        """
+        Fetch crypto bars from Alpaca CryptoHistoricalDataClient.
+
+        RS benchmark:
+          - BTC/USD: no RS gate (it IS the benchmark) — benchmark_data is empty
+          - All other crypto: RS vs BTC/USD
+        """
+        tf    = self._build_timeframe(interval)
+        start, end = self._build_date_range(period)
+
+        request = CryptoBarsRequest(
+            symbol_or_symbols=symbol,
+            timeframe=tf,
+            start=start,
+            end=end,
+            limit=10000,
+        )
+        bars = self.crypto_client.get_crypto_bars(request).df
+        if bars.empty:
+            logger.warning(f"No crypto data returned for {symbol}")
+            return pd.DataFrame()
+        bars = self._normalize_bars(bars)
+
+        # Fetch BTC/USD as the RS benchmark for altcoins
+        benchmark_data = pd.DataFrame()
+        if symbol.upper() != 'BTC/USD':
+            try:
+                btc_req = CryptoBarsRequest(
+                    symbol_or_symbols='BTC/USD',
+                    timeframe=tf,
+                    start=start,
+                    end=end,
+                    limit=10000,
+                )
+                btc_bars = self.crypto_client.get_crypto_bars(btc_req).df
+                if not btc_bars.empty:
+                    benchmark_data = self._normalize_bars(btc_bars)
+            except Exception:
+                pass  # RS vs BTC will be NaN — non-fatal
+
+        bars = TechnicalIndicators.calculate_all(bars, benchmark_data=benchmark_data)
+        logger.info(f"Retrieved {len(bars)} crypto bars for {symbol}")
+        return bars
 
     # ===== ACCOUNT & POSITIONS =====
 
@@ -640,12 +700,13 @@ class TradingBot:
         ]
 
         # ── Parallel data fetch ───────────────────────────────────────────────
-        # Fetch symbol bars and SPY bars for each timeframe concurrently.
-        # Keys: (tf_name, 'symbol') and (tf_name, 'spy')
+        # Fetch symbol bars for each timeframe concurrently.
+        # Benchmark (SPY for equities, BTC/USD for crypto alts) is already
+        # fetched inside _get_equity_data / _get_crypto_data and baked into
+        # the rs_vs_spy_20 column, so we only need the symbol bars here.
         fetch_tasks = {}
         for tf_name, interval, period in timeframe_specs:
             fetch_tasks[(tf_name, 'symbol')] = (symbol, period, interval)
-            fetch_tasks[(tf_name, 'spy')]    = ('SPY',  period, interval)
 
         fetched = {}
         with ThreadPoolExecutor(max_workers=6) as pool:
@@ -666,8 +727,7 @@ class TradingBot:
         results = {}
 
         for tf_name, interval, period in timeframe_specs:
-            data     = fetched.get((tf_name, 'symbol'), pd.DataFrame())
-            spy_data = fetched.get((tf_name, 'spy'),    pd.DataFrame())
+            data = fetched.get((tf_name, 'symbol'), pd.DataFrame())
 
             if data.empty:
                 payload = _json.dumps({
@@ -679,13 +739,9 @@ class TradingBot:
                 results[tf_name] = None
                 continue
 
-            # Inject SPY data into the bars so RS vs SPY is computed correctly.
-            # TechnicalIndicators.calculate_all accepts spy_data as a kwarg.
-            from analysis.indicators import TechnicalIndicators
-            try:
-                data = TechnicalIndicators.calculate_all(data, spy_data=spy_data)
-            except Exception as e:
-                logger.warning(f"Indicator recalc failed for {symbol} [{tf_name}]: {e}")
+            # Indicators (including RS vs benchmark) are already computed inside
+            # get_market_data → _get_equity_data / _get_crypto_data.
+            # No recalculation needed here.
 
             strategy = SignalHierarchy(ai_generator=ai_gen, timeframe=tf_name)
 

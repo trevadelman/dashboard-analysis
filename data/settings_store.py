@@ -25,6 +25,12 @@ DEFAULTS: dict[str, Any] = {
     "ai_model":           "gemma3:4b-it-qat",
     "max_positions":      "5",
     "risk_percentage":    "2.0",
+    # ── Autonomous bot ────────────────────────────────────────────────────────
+    "bot_autonomous":           "false",
+    "bot_scan_watchlist":       "sp500_top100",
+    "bot_max_daily_loss_pct":   "2.0",
+    "bot_entry_cooldown_hours": "24",
+    "bot_review_timeframes":    "swing,long",
 }
 
 # Keys whose values are encrypted at rest

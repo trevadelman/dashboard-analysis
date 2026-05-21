@@ -97,17 +97,18 @@ class TechnicalIndicators:
         return atr_vals.rolling(window=lookback, min_periods=20).rank(pct=True) * 100
 
     @staticmethod
-    def relative_strength_vs_spy(data, spy_data, period=20):
+    def relative_strength_vs_benchmark(data, benchmark_data, period=20):
         """
-        Compute rolling relative strength of this stock vs SPY.
-        rs_score = stock_return_N - spy_return_N (percentage points)
-        Positive = outperforming SPY. Negative = underperforming.
+        Compute rolling relative strength of this asset vs a benchmark.
+        rs_score = asset_return_N - benchmark_return_N (percentage points)
+        Positive = outperforming benchmark. Negative = underperforming.
+
+        Works for both equities (benchmark = SPY) and crypto (benchmark = BTC/USD).
         """
-        stock_return = data['close'].pct_change(periods=period) * 100
-        spy_return   = spy_data['close'].pct_change(periods=period) * 100
-        # Align on index before subtracting
-        spy_aligned  = spy_return.reindex(data.index, method='ffill')
-        return stock_return - spy_aligned
+        asset_return     = data['close'].pct_change(periods=period) * 100
+        bench_return     = benchmark_data['close'].pct_change(periods=period) * 100
+        bench_aligned    = bench_return.reindex(data.index, method='ffill')
+        return asset_return - bench_aligned
 
     @staticmethod
     def session_vwap(data):
@@ -147,17 +148,25 @@ class TechnicalIndicators:
         return data['volume'] / avg_vol
 
     @staticmethod
-    def calculate_all(data, spy_data=None):
+    def calculate_all(data, benchmark_data=None, spy_data=None):
         """
         Calculate all technical indicators.
 
         Args:
             data (pandas.DataFrame): Price data with OHLC columns
-            spy_data (pandas.DataFrame, optional): SPY price data for RS calculation
+            benchmark_data (pandas.DataFrame, optional): Benchmark bars for RS calculation.
+                For equities this is SPY; for crypto alts this is BTC/USD.
+                When empty or None, rs_vs_spy_20 is set to NaN (no RS gate).
+            spy_data (pandas.DataFrame, optional): Deprecated alias for benchmark_data.
+                Accepted for backward compatibility — callers that pass spy_data= still work.
 
         Returns:
             pandas.DataFrame: Data with indicators added
         """
+        # Backward-compat: spy_data= is an alias for benchmark_data=
+        if benchmark_data is None and spy_data is not None:
+            benchmark_data = spy_data
+
         df = data.copy()
 
         # ── Moving Averages ──────────────────────────────────────────────────
@@ -191,9 +200,13 @@ class TechnicalIndicators:
         df['rvol_20'] = TechnicalIndicators.relative_volume(df, period=20)
         df['vwap']    = TechnicalIndicators.session_vwap(df)
 
-        # ── Relative Strength vs SPY ─────────────────────────────────────────
-        if spy_data is not None and not spy_data.empty:
-            df['rs_vs_spy_20'] = TechnicalIndicators.relative_strength_vs_spy(df, spy_data, period=20)
+        # ── Relative Strength vs benchmark ───────────────────────────────────
+        # Column is always named rs_vs_spy_20 for backward compatibility with
+        # all downstream strategy and scanner code.
+        if benchmark_data is not None and not benchmark_data.empty:
+            df['rs_vs_spy_20'] = TechnicalIndicators.relative_strength_vs_benchmark(
+                df, benchmark_data, period=20
+            )
         else:
             df['rs_vs_spy_20'] = np.nan
 

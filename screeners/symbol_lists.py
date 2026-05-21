@@ -344,3 +344,21 @@ def get_crypto_symbols(limit: int = 300) -> List[str]:
 
 def get_crypto_info(limit: int = 300) -> List[Dict[str, Any]]:
     return SymbolListManager().get_crypto_universe(limit)
+
+
+# ── Crypto watchlist (Alpaca slash format) ────────────────────────────────────
+
+# Top 10 crypto assets available on Alpaca, in slash format (BTC/USD).
+# Used by the autonomous bot scanner and the settings UI watchlist selector.
+CRYPTO_TOP10 = [
+    "BTC/USD",
+    "ETH/USD",
+    "SOL/USD",
+    "AVAX/USD",
+    "LINK/USD",
+    "LTC/USD",
+    "BCH/USD",
+    "DOGE/USD",
+    "UNI/USD",
+    "AAVE/USD",
+]

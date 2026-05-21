@@ -173,9 +173,24 @@ async function loadAppSettings() {
             document.getElementById('preset-ollama')?.classList.remove('border-primary');
         }
 
-        // App tab
+        // App tab — risk
         document.getElementById('setting-max-positions').value = s.max_positions   || '5';
         document.getElementById('setting-risk-pct').value      = s.risk_percentage || '2.0';
+
+        // App tab — autonomous bot
+        const autonomous = (s.bot_autonomous || 'false').toLowerCase() === 'true';
+        document.getElementById('setting-bot-autonomous').checked = autonomous;
+
+        const watchlistEl = document.getElementById('setting-bot-watchlist');
+        if (watchlistEl) watchlistEl.value = s.bot_scan_watchlist || 'sp500_top100';
+
+        document.getElementById('setting-bot-max-loss').value  = s.bot_max_daily_loss_pct   || '2.0';
+        document.getElementById('setting-bot-cooldown').value  = s.bot_entry_cooldown_hours || '24';
+
+        const reviewTfs = (s.bot_review_timeframes || 'swing,long').split(',').map(t => t.trim());
+        document.getElementById('setting-bot-tf-long').checked  = reviewTfs.includes('long');
+        document.getElementById('setting-bot-tf-swing').checked = reviewTfs.includes('swing');
+        document.getElementById('setting-bot-tf-short').checked = reviewTfs.includes('short');
 
         // Password always blank on load
         document.getElementById('setting-password').value         = '';
@@ -223,10 +238,21 @@ async function saveAppSettings() {
 
     status.innerHTML = '<span class="loading loading-spinner loading-xs"></span> Saving…';
 
+    // Build review timeframes string from checkboxes
+    const reviewTfs = ['long', 'swing', 'short']
+        .filter(tf => document.getElementById(`setting-bot-tf-${tf}`)?.checked)
+        .join(',') || 'swing,long';
+
     const payload = {
         max_positions:      parseInt(document.getElementById('setting-max-positions').value, 10),
         risk_percentage:    parseFloat(document.getElementById('setting-risk-pct').value),
         dashboard_password: pw,
+        // Autonomous bot
+        bot_autonomous:           document.getElementById('setting-bot-autonomous').checked ? 'true' : 'false',
+        bot_scan_watchlist:       document.getElementById('setting-bot-watchlist').value,
+        bot_max_daily_loss_pct:   parseFloat(document.getElementById('setting-bot-max-loss').value),
+        bot_entry_cooldown_hours: parseInt(document.getElementById('setting-bot-cooldown').value, 10),
+        bot_review_timeframes:    reviewTfs,
     };
 
     try {

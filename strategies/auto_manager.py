@@ -96,13 +96,26 @@ def _log_trade(trade_info: dict) -> None:
 # ── Market hours ──────────────────────────────────────────────────────────────
 
 def is_market_hours() -> bool:
-    """Return True if the current ET time is within regular market hours Mon–Fri."""
+    """Return True if the current ET time is within regular equity market hours Mon–Fri."""
     now = datetime.now(_ET)
     if now.weekday() >= 5:          # Saturday=5, Sunday=6
         return False
     market_open  = now.replace(hour=9,  minute=30, second=0, microsecond=0)
     market_close = now.replace(hour=16, minute=0,  second=0, microsecond=0)
     return market_open <= now < market_close
+
+
+def is_tradeable_now(symbol: str) -> bool:
+    """
+    Return True if the symbol can be traded right now.
+
+    Crypto trades 24/7 — always returns True.
+    Equities are gated to regular market hours Mon–Fri 09:30–16:00 ET.
+    """
+    from analysis.asset_type import AssetType, classify_symbol
+    if classify_symbol(symbol) == AssetType.CRYPTO:
+        return True
+    return is_market_hours()
 
 
 # ── Circuit breakers ──────────────────────────────────────────────────────────
@@ -323,8 +336,14 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
     """
     from screeners.market_scanner import MarketScanner
 
-    if not is_market_hours():
-        logger.debug(f"Entry scan ({timeframe}) skipped — outside market hours")
+    # Crypto watchlists trade 24/7; equity watchlists are gated to market hours.
+    # We check the first symbol in the resolved list to determine the asset class.
+    from screeners.market_scanner import SYMBOL_LISTS
+    list_name = config.BOT_SCAN_WATCHLIST
+    sample_symbols = SYMBOL_LISTS.get(list_name, [])
+    first_sym = sample_symbols[0] if sample_symbols else ""
+    if not is_tradeable_now(first_sym):
+        logger.debug(f"Entry scan ({timeframe}) skipped — outside tradeable hours for {list_name}")
         return
 
     ok, reason = check_circuit_breakers(bot, config, state)
@@ -337,7 +356,7 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
         return
 
     try:
-        scanner = MarketScanner(bot)
+        scanner = MarketScanner(bot.data_client, crypto_client=bot.crypto_client)
         list_name = config.BOT_SCAN_WATCHLIST
 
         # Collect all results from the scan stream

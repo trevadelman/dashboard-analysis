@@ -48,9 +48,10 @@ def _job_market_open_snapshot(bot, config) -> None:
 
 def _job_exit_poller(bot, config) -> None:
     try:
-        from strategies.auto_manager import _load_state, detect_exits, is_market_hours
-        if not is_market_hours():
-            return
+        from strategies.auto_manager import _load_state, detect_exits, is_tradeable_now
+        # Exit detection runs whenever any position could have been closed.
+        # Crypto positions can close 24/7; equity positions only during market hours.
+        # We run the poller unconditionally and let detect_exits handle the routing.
         state = _load_state()
         detect_exits(bot, state)
     except Exception as e:

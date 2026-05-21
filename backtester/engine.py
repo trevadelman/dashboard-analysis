@@ -190,7 +190,7 @@ class BacktestEngine:
         center=True) which DO introduce lookahead. We replace them with
         causal equivalents here.
         """
-        enriched = TechnicalIndicators.calculate_all(bars, spy_data=spy_bars)
+        enriched = TechnicalIndicators.calculate_all(bars, benchmark_data=spy_bars)
         enriched = self._add_causal_patterns(enriched)
         return enriched
 

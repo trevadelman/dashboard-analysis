@@ -627,7 +627,7 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
                 yield f"data: {_json.dumps({'type': 'error', 'message': 'No Alpaca credentials — add a profile first'})}\n\n"
             return StreamingResponse(no_api(), media_type="text/event-stream")
 
-        scanner = MarketScanner(bot.data_client)
+        scanner = MarketScanner(bot.data_client, crypto_client=bot.crypto_client)
 
         def event_generator():
             import json as _json
@@ -1294,6 +1294,28 @@ Rules: Use markdown headers. Be direct. Use actual numbers from the data. No dis
                 set_setting("risk_percentage", str(val))
                 bot.config.RISK_PERCENTAGE = val
                 bot.risk_percentage        = val
+
+            # Bot autonomous settings — live reload (no restart required)
+            if "bot_autonomous" in data:
+                val = str(data["bot_autonomous"]).lower()
+                set_setting("bot_autonomous", val)
+                bot.config.BOT_AUTONOMOUS = val == "true"
+            if "bot_scan_watchlist" in data:
+                val = str(data["bot_scan_watchlist"]).strip()
+                set_setting("bot_scan_watchlist", val)
+                bot.config.BOT_SCAN_WATCHLIST = val
+            if "bot_max_daily_loss_pct" in data:
+                val = float(data["bot_max_daily_loss_pct"])
+                set_setting("bot_max_daily_loss_pct", str(val))
+                bot.config.BOT_MAX_DAILY_LOSS_PCT = val
+            if "bot_entry_cooldown_hours" in data:
+                val = int(data["bot_entry_cooldown_hours"])
+                set_setting("bot_entry_cooldown_hours", str(val))
+                bot.config.BOT_ENTRY_COOLDOWN_HOURS = val
+            if "bot_review_timeframes" in data:
+                val = str(data["bot_review_timeframes"]).strip()
+                set_setting("bot_review_timeframes", val)
+                bot.config.BOT_REVIEW_TIMEFRAMES = [t.strip() for t in val.split(",") if t.strip()]
 
             # Password — only update if a real value was sent (not the placeholder)
             if "dashboard_password" in data:

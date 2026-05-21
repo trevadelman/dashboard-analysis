@@ -49,13 +49,24 @@ class Config:
         self.MAX_POSITIONS   = int(get_setting("max_positions") or "5")
         self.RISK_PERCENTAGE = float(get_setting("risk_percentage") or "2.0")
 
-        # ── Autonomous bot ────────────────────────────────────────────────────
-        self.BOT_AUTONOMOUS          = os.getenv("BOT_AUTONOMOUS", "false").lower() == "true"
-        self.BOT_SCAN_WATCHLIST      = os.getenv("BOT_SCAN_WATCHLIST", "sp500_top100")
-        self.BOT_MAX_DAILY_LOSS_PCT  = float(os.getenv("BOT_MAX_DAILY_LOSS_PCT", "2.0"))
-        self.BOT_ENTRY_COOLDOWN_HOURS = int(os.getenv("BOT_ENTRY_COOLDOWN_HOURS", "24"))
-        self.BOT_REVIEW_TIMEFRAMES   = [
-            t.strip() for t in os.getenv("BOT_REVIEW_TIMEFRAMES", "swing,long").split(",")
+        # ── Autonomous bot (settings store; .env is fallback for bootstrap) ──
+        self.BOT_AUTONOMOUS = (
+            get_setting("bot_autonomous") or os.getenv("BOT_AUTONOMOUS", "false")
+        ).lower() == "true"
+        self.BOT_SCAN_WATCHLIST = (
+            get_setting("bot_scan_watchlist") or os.getenv("BOT_SCAN_WATCHLIST", "sp500_top100")
+        )
+        self.BOT_MAX_DAILY_LOSS_PCT = float(
+            get_setting("bot_max_daily_loss_pct") or os.getenv("BOT_MAX_DAILY_LOSS_PCT", "2.0")
+        )
+        self.BOT_ENTRY_COOLDOWN_HOURS = int(
+            get_setting("bot_entry_cooldown_hours") or os.getenv("BOT_ENTRY_COOLDOWN_HOURS", "24")
+        )
+        self.BOT_REVIEW_TIMEFRAMES = [
+            t.strip()
+            for t in (
+                get_setting("bot_review_timeframes") or os.getenv("BOT_REVIEW_TIMEFRAMES", "swing,long")
+            ).split(",")
             if t.strip()
         ]
 

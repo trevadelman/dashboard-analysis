@@ -132,6 +132,9 @@ class SignalHierarchy:
         Every event carries a 'timeframe' key so the UI can route it correctly.
         Final yield has type='done'.
         """
+        # Store symbol so check_setup_and_trigger can read it for the BTC RS bypass.
+        self._symbol = symbol
+
         audit        = []
         entry_signal = None
         tf           = self.timeframe
@@ -313,18 +316,30 @@ class SignalHierarchy:
         else:
             details.append("ATR contraction: N/A (insufficient data)")
 
-        # ── Setup: Relative Strength vs SPY ──────────────────────────────────
-        # RS is a core alpha component. Fail closed if SPY data unavailable.
+        # ── Setup: Relative Strength vs benchmark ────────────────────────────
+        # For equities: RS vs SPY.  For crypto alts: RS vs BTC/USD.
+        # BTC/USD itself has no benchmark — rs_vs_spy_20 will be NaN and we
+        # skip the gate rather than failing closed (BTC IS the benchmark).
+        # The column is always named rs_vs_spy_20 for backward compatibility.
         rs = latest.get('rs_vs_spy_20', float('nan'))
         if math.isnan(rs):
-            details.append("RS vs SPY: N/A — SPY data unavailable → ❌ FAIL (failing closed to preserve edge)")
-            return None, details
-
-        rs_ok = rs >= self.params['rs_min']
-        details.append(f"RS vs SPY (20d): {rs:.2f}pp (min={self.params['rs_min']}) → {'✅ Outperforming' if rs_ok else '❌ Underperforming'}")
-        if not rs_ok:
-            details.append("❌ Relative strength too weak — not a setup")
-            return None, details
+            # Determine whether this is BTC (no benchmark) or a data gap.
+            # We detect BTC by checking whether the symbol was passed in.
+            # SignalHierarchy receives symbol in stream_signal/generate_signal
+            # but not here — use the presence of a non-NaN rs column as the
+            # proxy.  If rs is NaN and the symbol is BTC/USD, skip the gate.
+            # For all other assets, fail closed to preserve edge.
+            if getattr(self, '_symbol', '').upper() in ('BTC/USD', 'BTCUSD', 'BTC'):
+                details.append("RS vs benchmark: N/A — BTC/USD is the benchmark → ✅ SKIPPED")
+            else:
+                details.append("RS vs benchmark: N/A — benchmark data unavailable → ❌ FAIL (failing closed to preserve edge)")
+                return None, details
+        else:
+            rs_ok = rs >= self.params['rs_min']
+            details.append(f"RS vs benchmark (20d): {rs:.2f}pp (min={self.params['rs_min']}) → {'✅ Outperforming' if rs_ok else '❌ Underperforming'}")
+            if not rs_ok:
+                details.append("❌ Relative strength too weak — not a setup")
+                return None, details
 
         # ── Trigger: EMA9 reclaim ─────────────────────────────────────────────
         # Price must be on the correct side of EMA9 — this is the short-term
@@ -403,6 +418,8 @@ class SignalHierarchy:
         # Entry: limit at the breakout level + small ATR buffer.
         # Stop: structural invalidation (compression low/high ± 0.25×ATR).
         # Target: 2R from the limit entry.
+        rs_str = f"{rs:.1f}pp" if not math.isnan(rs) else "N/A (benchmark)"
+
         if regime == 'BULLISH':
             limit_entry     = round(breakout_level + atr * 0.10, 2)
             compression_low = data['low'].tail(5).min()
@@ -411,7 +428,7 @@ class SignalHierarchy:
             target_price    = round(limit_entry + risk * 2.0, 2)
             side            = 'buy'
             reason          = (f"Compression breakout above {breakout_level:.2f}: "
-                               f"EMA21/50 aligned + BB compressed + RS {rs:.1f}pp + RVOL {rvol:.1f}x")
+                               f"EMA21/50 aligned + BB compressed + RS {rs_str} + RVOL {rvol:.1f}x")
         else:
             limit_entry      = round(breakdown_level - atr * 0.10, 2)
             compression_high = data['high'].tail(5).max()
@@ -420,7 +437,7 @@ class SignalHierarchy:
             target_price     = round(limit_entry - risk * 2.0, 2)
             side             = 'sell'
             reason           = (f"Compression breakdown below {breakdown_level:.2f}: "
-                                f"EMA21/50 aligned + BB compressed + RS {rs:.1f}pp + RVOL {rvol:.1f}x")
+                                f"EMA21/50 aligned + BB compressed + RS {rs_str} + RVOL {rvol:.1f}x")
 
         details.append(f"✅ All conditions met — {side.upper()} signal generated")
         details.append(f"Limit entry: ${limit_entry} | Stop: ${stop_price} | Target: ${target_price} | R:R 2:1")
