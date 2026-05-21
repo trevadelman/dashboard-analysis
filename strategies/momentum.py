@@ -179,18 +179,15 @@ class SignalHierarchy:
         audit.append(tier4)
         yield tier4
 
-        # Final verdict
+        # Final verdict — AI confirmation is informational only, never gates the signal
         regime_ok    = regime != 'NO_TRADE'
-        ai_ok        = tier3['result'] in ('PASS', 'SKIPPED')
-        signal_valid = entry_signal and regime_ok and ai_ok and rr_pass
+        signal_valid = entry_signal and regime_ok and rr_pass
 
         blocked_at = None
         if not regime_ok:
             blocked_at = 'Tier 1: Market Regime'
         elif not entry_signal:
             blocked_at = 'Tier 2: Setup & Trigger'
-        elif tier3['result'] == 'FAIL':
-            blocked_at = 'Tier 3: AI Confirmation'
         elif not rr_pass:
             blocked_at = 'Tier 4: Risk Management'
 
