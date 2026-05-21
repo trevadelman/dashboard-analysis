@@ -66,6 +66,7 @@
                 <a role="tab" class="tab tab-active text-xs" id="htab-overview"  onclick="switchHelpTab('overview')">Overview</a>
                 <a role="tab" class="tab text-xs"             id="htab-scanner"  onclick="switchHelpTab('scanner')">Scanner</a>
                 <a role="tab" class="tab text-xs"             id="htab-analysis" onclick="switchHelpTab('analysis')">Analysis</a>
+                <a role="tab" class="tab text-xs"             id="htab-pulse"    onclick="switchHelpTab('pulse')">Market Pulse</a>
                 <a role="tab" class="tab text-xs"             id="htab-bot"      onclick="switchHelpTab('bot')">Autonomous Bot</a>
                 <a role="tab" class="tab text-xs"             id="htab-positions" onclick="switchHelpTab('positions')">Positions</a>
                 <a role="tab" class="tab text-xs"             id="htab-backtest" onclick="switchHelpTab('backtest')">Backtest</a>
@@ -79,22 +80,23 @@
                     <h3>What is this app?</h3>
                     <p>A self-hosted trading dashboard that connects to your Alpaca brokerage account. It has two modes that work independently or together:</p>
                     <ul>
-                        <li><strong>Manual mode</strong> — you use the Analysis Dashboard and Scanner to find setups, then place orders yourself from the Positions page.</li>
+                        <li><strong>Manual mode</strong> — use the Analysis Dashboard and Scanner to find setups, then place orders yourself via the trade modal.</li>
                         <li><strong>Autonomous mode</strong> — the bot scans the market on a schedule, finds signals, and places bracket orders automatically.</li>
                     </ul>
 
                     <h3>Pages at a glance</h3>
-                    <div class="kv"><span class="k">Analysis Dashboard</span><span>Chart + indicators for a single symbol. Enter orders manually.</span></div>
+                    <div class="kv"><span class="k">Analysis Dashboard</span><span>Chart + multi-timeframe analysis for a single symbol. Review and execute trades via a modal.</span></div>
                     <div class="kv"><span class="k">Market Scanner</span><span>Batch scan a universe of symbols. Load cached results or run a fresh scan.</span></div>
-                    <div class="kv"><span class="k">Market Pulse</span><span>Broad market regime — SPY, QQQ, sector ETFs, breadth indicators.</span></div>
-                    <div class="kv"><span class="k">Positions</span><span>Live open positions, P&amp;L, and order management.</span></div>
-                    <div class="kv"><span class="k">Backtest</span><span>Run the momentum strategy against historical data for any symbol.</span></div>
+                    <div class="kv"><span class="k">Market Pulse</span><span>Aggregated view of the latest scan cache — stance, signals, top setups, grade distribution, and AI commentary across all timeframes.</span></div>
+                    <div class="kv"><span class="k">Positions</span><span>Open positions with mini charts, position review verdicts, order adjustments, bot status, action log, and trade history.</span></div>
+                    <div class="kv"><span class="k">Backtest</span><span>Run the momentum strategy against historical data for any symbol. Results in R-multiples.</span></div>
 
                     <h3>First-time setup</h3>
                     <ul>
                         <li>Open <strong>Settings → Alpaca</strong> and add your API key + secret. Use paper trading to start.</li>
                         <li>Optionally configure an AI provider (Ollama or DeepSeek) in <strong>Settings → AI</strong> for AI-assisted signal scoring.</li>
                         <li>Set your risk % and max positions in <strong>Settings → App</strong>.</li>
+                        <li>Run a scan from the Market Scanner — this populates the cache that Market Pulse reads from.</li>
                     </ul>
                 </div>
 
@@ -119,36 +121,91 @@
                     <div class="kv"><span class="k">Rel Strength</span><span>Price return vs SPY over the lookback period. Positive = outperforming.</span></div>
                     <div class="kv"><span class="k">RVOL</span><span>Relative volume — today's volume vs the 20-day average. &gt;1.5 = elevated.</span></div>
                     <div class="kv"><span class="k">BB Width %</span><span>Bollinger Band width as a % of price. Low = compressed = potential breakout.</span></div>
+                    <div class="kv"><span class="k">RSI</span><span>14-period RSI at the time of the scan.</span></div>
+
+                    <h3>Sorting &amp; filtering</h3>
+                    <p>Click any column header to sort results by that column. Type in the filter box to instantly narrow by symbol, regime, signal, or grade. Examples: <code>BUY</code>, <code>BULLISH</code>, <code>NVDA</code>, <code>A</code>.</p>
+
+                    <h3>Export</h3>
+                    <p>After a scan completes, an <strong>Export CSV</strong> button appears. Downloads all result rows as a CSV file.</p>
 
                     <h3>Cache</h3>
-                    <p>Every completed scan is saved to a local cache. The autonomous bot also writes to this cache on its scheduled runs. Click <strong>Load Cache</strong> to view the latest results without re-scanning.</p>
+                    <p>Every completed scan is saved to a local cache. The autonomous bot also writes to this cache on its scheduled runs. Click <strong>Load Cache</strong> (via the Cache popover in the header) to view the latest results without re-scanning. Market Pulse reads from this same cache.</p>
+                </div>
 
-                    <h3>Text filter</h3>
-                    <p>Type in the filter box to instantly narrow results. Matches against symbol, regime, signal, and grade. Examples: <code>BUY</code>, <code>BULLISH</code>, <code>NVDA</code>, <code>A</code>.</p>
+                <!-- ── Market Pulse ───────────────────────────────────────── -->
+                <div id="hpanel-pulse" class="help-prose hidden">
+                    <h3>What is Market Pulse?</h3>
+                    <p>Market Pulse is the highest-level view in the app. It reads from the latest scan cache and aggregates everything into one page — so you can see the state of the entire market at a glance without running a new scan. It's the first place to look each morning.</p>
+                    <p>If no cache exists yet, the page shows a warning with a link to run a scan. The autonomous bot also writes to this cache on its scheduled runs, so Market Pulse stays current automatically when the bot is active.</p>
+
+                    <h3>Cross-timeframe overview cards</h3>
+                    <p>Three cards at the top — one per timeframe (Long/Swing/Short). Each shows:</p>
+                    <ul>
+                        <li><strong>Stance badge</strong> — the overall market posture for that timeframe (see Stance values below).</li>
+                        <li><strong>Regime bar</strong> — a horizontal bar showing the % of scanned symbols that are BULLISH vs BEARISH vs NEUTRAL.</li>
+                        <li><strong>Avg Score</strong> — average Tier 2 composite score across all scanned symbols.</li>
+                        <li><strong>Signals</strong> — count of active BUY/SELL signals in this timeframe.</li>
+                        <li><strong>Setups</strong> — count of symbols that are forming (Tier 2 scored but below signal threshold).</li>
+                        <li><strong>Total symbols scanned</strong> — shown at the bottom of each card.</li>
+                    </ul>
+
+                    <h3>Stance values</h3>
+                    <div class="kv"><span class="k">RISK ON</span><span>Strong bullish majority, multiple signals firing. Favorable conditions for new entries.</span></div>
+                    <div class="kv"><span class="k">SELECTIVE</span><span>Mixed conditions. Some signals present but breadth is not broad. Be selective.</span></div>
+                    <div class="kv"><span class="k">COILING</span><span>Low volatility, many setups forming but few signals. Market may be compressing before a move.</span></div>
+                    <div class="kv"><span class="k">WAIT</span><span>Weak breadth, few signals. Not a good environment for new entries.</span></div>
+                    <div class="kv"><span class="k">RISK OFF</span><span>Bearish majority. Avoid new long entries; consider reducing exposure.</span></div>
+
+                    <h3>Active signals table</h3>
+                    <p>All BUY and SELL signals across all timeframes in one table. Columns: Symbol, Timeframe, Signal, Score, Grade, RS vs SPY, RVOL, BB Width%, RSI, Price. Click any row to open that symbol in the Analysis Dashboard.</p>
+
+                    <h3>Top setups by timeframe</h3>
+                    <p>Tabbed view (Long / Swing / Short) showing the top 10 highest-scoring symbols for each timeframe — whether or not they have an active signal. Useful for finding symbols that are close to triggering. Same columns as the signals table, plus Regime.</p>
+
+                    <h3>Timeframe report cards</h3>
+                    <p>Collapsed accordion section. Expand to see a detailed breakdown per timeframe:</p>
+                    <ul>
+                        <li><strong>Grade distribution</strong> — bar chart showing how many symbols scored A / B / C / D.</li>
+                        <li><strong>Why signals aren't triggering</strong> — the top 5 failure gates (e.g. "Low RVOL", "Bearish regime") and how many symbols failed each one. This is the most diagnostic section — it tells you exactly what the market is missing for signals to fire.</li>
+                    </ul>
+
+                    <h3>AI market commentary</h3>
+                    <p>Collapsed section at the bottom. Click to expand and stream a cross-timeframe AI narrative based on the scan data. Requires an AI provider configured in Settings. Only loads once per page visit.</p>
+
+                    <h3>Cache age</h3>
+                    <p>The subtitle under "Market Pulse" shows when the cache was last written and how long ago that was. If the cache is stale, click <strong>Run Scan</strong> in the header to refresh it.</p>
                 </div>
 
                 <!-- ── Analysis Dashboard ─────────────────────────────────── -->
                 <div id="hpanel-analysis" class="help-prose hidden">
                     <h3>Symbol lookup</h3>
-                    <p>Type any ticker in the search box. The dashboard fetches OHLCV bars and runs the full indicator suite. Crypto symbols use slash format (e.g. <code>BTC/USD</code>).</p>
+                    <p>Type any ticker in the search box and click <strong>Analyze</strong>. The dashboard fetches OHLCV bars and runs the full multi-timeframe analysis. Crypto symbols use slash format (e.g. <code>BTC/USD</code>). You can also navigate here from the Scanner or Market Pulse by clicking any symbol row — the symbol is pre-filled and analysis runs automatically.</p>
 
-                    <h3>Timeframes</h3>
+                    <h3>Chart timeframe selector</h3>
+                    <p>The chart interval selector (1D / 1H / 15m / 5m / 1m) controls what the candlestick chart displays. The analysis always runs all three timeframes (Long/Swing/Short) regardless of the chart interval.</p>
+
+                    <h3>Multi-timeframe analysis</h3>
+                    <p>Results stream in as three side-by-side columns — Long (Daily), Swing (Hourly), Short (15-min). Each column shows the Tier 1 and Tier 2 verdict cards as they complete, plus an overall alignment badge (ALIGNED / PARTIAL / CAUTION / MIXED).</p>
                     <div class="kv"><span class="k">Long (Daily)</span><span>1 year of daily bars. Best for swing-to-position trades held days to weeks.</span></div>
                     <div class="kv"><span class="k">Swing (Hourly)</span><span>3 months of hourly bars. Best for multi-day swing trades.</span></div>
                     <div class="kv"><span class="k">Short (15-min)</span><span>1 month of 15-minute bars. Best for intraday and short-term trades.</span></div>
 
-                    <h3>Indicator panels</h3>
+                    <h3>Chart indicators</h3>
                     <div class="kv"><span class="k">Price + EMAs</span><span>Candlestick chart with 9/21/50 EMA overlays. EMA stack alignment = trend direction.</span></div>
                     <div class="kv"><span class="k">RSI</span><span>14-period RSI. Above 55 = bullish momentum, below 45 = bearish.</span></div>
                     <div class="kv"><span class="k">MACD</span><span>12/26/9 MACD. Histogram color shows momentum direction.</span></div>
                     <div class="kv"><span class="k">Bollinger Bands</span><span>20-period BB. Narrow bands = compression = potential breakout setup.</span></div>
                     <div class="kv"><span class="k">Volume</span><span>Bar volume with 20-day average overlay. Spikes confirm moves.</span></div>
 
-                    <h3>Signal output</h3>
-                    <p>The signal card shows the Tier 1 + Tier 2 verdict, score, grade, suggested entry/stop/target, and risk-reward ratio. If AI is configured, an AI confidence score is also shown.</p>
+                    <h3>Signal cards</h3>
+                    <p>When a signal is found, a card appears above the timeframe columns showing: BUY/SELL badge, entry/stop/target levels, R:R ratio, and an AI confidence bar (if AI is configured). Each signal card has a <strong>Review &amp; Execute</strong> button.</p>
 
-                    <h3>Placing orders</h3>
-                    <p>Use the Order panel to submit market or limit orders directly to Alpaca. Position size is calculated automatically based on your risk % setting and the suggested stop distance.</p>
+                    <h3>Trade modal</h3>
+                    <p>Clicking <strong>Review &amp; Execute</strong> opens a modal pre-filled with the signal's entry, stop, and target. Position size is estimated at 1% of your account equity divided by the stop distance. You can choose GTC (Good Till Cancelled) or Day order duration. The order is submitted as a bracket order — entry limit + stop loss + take profit in one.</p>
+
+                    <h3>AI commentary</h3>
+                    <p>If an AI provider is configured, a consolidated commentary card streams in below the timeframe columns after analysis completes. Each timeframe column also gets its own per-timeframe commentary inline.</p>
                 </div>
 
                 <!-- ── Autonomous Bot ─────────────────────────────────────── -->
@@ -166,16 +223,16 @@
                     <div class="kv"><span class="k">9:30 ET Mon–Fri</span><span>Snapshot opening equity, reset daily halt.</span></div>
                     <div class="kv"><span class="k">9:35 ET Mon–Fri</span><span>Review long (daily) positions.</span></div>
                     <div class="kv"><span class="k">9:40 ET Mon–Fri</span><span>Scan for long signals.</span></div>
-                    <div class="kv"><span class="k">Every 15 min</span><span>Scan for short (15-min) signals.</span></div>
-                    <div class="kv"><span class="k">Every 60 min</span><span>Scan for swing signals + review swing positions.</span></div>
-                    <div class="kv"><span class="k">Every 5 min</span><span>Exit detection poller.</span></div>
+                    <div class="kv"><span class="k">Every 15 min</span><span>Scan for short (15-min) signals during market hours.</span></div>
+                    <div class="kv"><span class="k">Every 60 min</span><span>Scan for swing signals + review swing positions during market hours.</span></div>
+                    <div class="kv"><span class="k">Every 5 min</span><span>Exit detection poller (market hours).</span></div>
 
-                    <h3>Schedule (crypto watchlists)</h3>
-                    <p>Same interval jobs, but the three daily jobs fire at midnight ET (7 days/week) instead of 9:30 ET Mon–Fri. Crypto positions are reviewed 24/7.</p>
+                    <h3>Schedule (crypto watchlist)</h3>
+                    <p>When the watchlist is set to <strong>All Crypto (Alpaca)</strong>, the bot switches to a 24/7 schedule. The three daily jobs fire at midnight ET every day (including weekends) instead of 9:30 ET Mon–Fri. Interval jobs (15-min, hourly, exit detection) run around the clock.</p>
 
                     <h3>Settings</h3>
                     <div class="kv"><span class="k">Enable autonomous</span><span>Master switch. Off = bot scans but never places orders.</span></div>
-                    <div class="kv"><span class="k">Scan Watchlist</span><span>Universe the bot scans. All Sectors = ~500 stocks. Full Universe = full cached Alpaca equity list.</span></div>
+                    <div class="kv"><span class="k">Scan Watchlist</span><span>Universe the bot scans. Choosing crypto also switches the schedule to 24/7 mode.</span></div>
                     <div class="kv"><span class="k">Max Daily Loss %</span><span>If account equity drops this % from the opening snapshot, the bot halts for the rest of the day.</span></div>
                     <div class="kv"><span class="k">Entry Cooldown</span><span>Minimum hours between bot entries on the same symbol. Prevents re-entering a position too soon.</span></div>
                     <div class="kv"><span class="k">Review Timeframes</span><span>Which timeframes the position reviewer runs on. Match to the timeframes you trade.</span></div>
@@ -184,47 +241,74 @@
                     <p>The bot always submits <strong>bracket orders</strong> — a limit entry with a stop loss and take profit baked in. If the bot goes offline, your stops remain active on Alpaca's servers.</p>
 
                     <h3>Circuit breaker</h3>
-                    <p>Triggered automatically when the daily loss limit is breached, or manually via the Pause button on the dashboard. Resets at the next market open (or midnight for crypto).</p>
+                    <p>Triggered automatically when the daily loss limit is breached, or manually via the <strong>Pause</strong> button on the Positions page. Resets at the next market open (or midnight for crypto).</p>
+
+                    <h3>Monitoring</h3>
+                    <p>All bot activity is visible on the <strong>Positions</strong> page — the Autonomous Bot section shows running/halted status, scheduled job next-run times, and the last 20 actions with timestamps.</p>
                 </div>
 
                 <!-- ── Positions ──────────────────────────────────────────── -->
                 <div id="hpanel-positions" class="help-prose hidden">
-                    <h3>Open positions</h3>
-                    <p>Shows all currently open positions from your Alpaca account. Refreshes automatically every 30 seconds.</p>
-                    <div class="kv"><span class="k">Unrealized P&amp;L</span><span>Current mark-to-market gain/loss on the position.</span></div>
-                    <div class="kv"><span class="k">Cost Basis</span><span>Average entry price × quantity.</span></div>
-                    <div class="kv"><span class="k">Market Value</span><span>Current price × quantity.</span></div>
+                    <h3>Summary bar</h3>
+                    <p>The top of the page shows total open positions count, combined market value, and total unrealized P&amp;L across all positions.</p>
 
-                    <h3>Closing positions</h3>
-                    <p>Use the Close button to submit a market order to close the full position immediately. For partial closes, use the Analysis Dashboard order panel.</p>
+                    <h3>Position cards</h3>
+                    <p>Each open position is an expandable accordion card. Collapsed view shows symbol, quantity, current price, and unrealized P&amp;L. Expanded view has two panels:</p>
+                    <ul>
+                        <li><strong>Left — Position Summary:</strong> stats grid (Avg Entry, Current Price, Market Value, Unrealized P&amp;L), a 3-month daily candlestick mini-chart with entry/stop/target price lines drawn on it, and a price level legend.</li>
+                        <li><strong>Right — Position Review:</strong> auto-runs when the card opens. Shows a verdict, momentum health grid, suggested adjustments, and action buttons.</li>
+                    </ul>
 
-                    <h3>Orders</h3>
-                    <p>The Orders tab shows all open and recently filled orders. Bracket order legs (stop loss, take profit) appear as child orders under the parent entry order.</p>
+                    <h3>Position review verdicts</h3>
+                    <div class="kv"><span class="k">HOLD</span><span>Momentum is intact. No action needed.</span></div>
+                    <div class="kv"><span class="k">TRAIL STOP</span><span>Price has moved favorably. Suggested new stop level shown.</span></div>
+                    <div class="kv"><span class="k">RAISE TARGET</span><span>Strong momentum. Suggested new target level shown.</span></div>
+                    <div class="kv"><span class="k">PARTIAL PROFIT</span><span>Consider taking partial profits at current levels.</span></div>
+                    <div class="kv"><span class="k">EXIT</span><span>Momentum has deteriorated. Consider closing the position.</span></div>
+
+                    <h3>Momentum health grid</h3>
+                    <p>Six indicators shown per position: Regime (BULLISH/BEARISH), RSI + trend direction, EMA9 slope %, Relative Volume, Extension (ATR multiples from EMA9), and price vs EMA9 (ABOVE/BELOW).</p>
+
+                    <h3>Adjust orders</h3>
+                    <p>Pre-filled inputs for stop and target prices (populated with suggested values from the review). Click <strong>Apply Adjustment</strong> to modify the live bracket order on Alpaca. Click <strong>Close Position</strong> to submit a market close order (with inline confirmation).</p>
+
+                    <h3>Autonomous Bot section</h3>
+                    <p>Shows the bot's running/halted/auto-entry status, today's action count, daily open equity snapshot, and a table of scheduled jobs with their next run times. Use the <strong>Pause / Resume</strong> button to manually halt or resume the bot.</p>
+
+                    <h3>Recent Bot Actions</h3>
+                    <p>A log of the last 20 bot actions: Entry, Trail Stop, Exit Detected, Circuit Breaker, etc. — with timestamp, action type, symbol, and result summary.</p>
+
+                    <h3>Trade History</h3>
+                    <p>All entries and exits logged by the app (both manual and bot-placed). Shows symbol, side, timeframe, date, quantity, entry/stop/target/exit prices, P&amp;L, and status (Open / Stop Hit / Target Hit / Manual close).</p>
                 </div>
 
                 <!-- ── Backtest ───────────────────────────────────────────── -->
                 <div id="hpanel-backtest" class="help-prose hidden">
                     <h3>What it tests</h3>
-                    <p>Runs the same momentum strategy (Tier 1 + Tier 2) against historical OHLCV data for a single symbol. Simulates entries and exits using the same signal logic the live bot uses.</p>
+                    <p>Runs the same momentum strategy (Tier 1 + Tier 2) against historical OHLCV data for a single symbol. Simulates entries and exits bar-by-bar using the same signal logic the live bot uses. Results are expressed in R-multiples (units of initial risk), not dollar amounts.</p>
 
                     <h3>Parameters</h3>
                     <div class="kv"><span class="k">Symbol</span><span>Any equity or crypto symbol.</span></div>
                     <div class="kv"><span class="k">Timeframe</span><span>Long (daily), Swing (hourly), or Short (15-min).</span></div>
-                    <div class="kv"><span class="k">Start / End date</span><span>Historical range to test over.</span></div>
-                    <div class="kv"><span class="k">Initial capital</span><span>Starting account size for the simulation.</span></div>
-                    <div class="kv"><span class="k">Risk %</span><span>% of equity risked per trade (same as the live bot setting).</span></div>
+                    <div class="kv"><span class="k">Period</span><span>Historical lookback: 3 months, 6 months, 1 year, 2 years, or 3 years.</span></div>
 
-                    <h3>Results</h3>
-                    <div class="kv"><span class="k">Total return</span><span>Net % gain/loss over the test period.</span></div>
-                    <div class="kv"><span class="k">Win rate</span><span>% of trades that were profitable.</span></div>
-                    <div class="kv"><span class="k">Avg R</span><span>Average return in units of initial risk (R). &gt;1.0 = positive expectancy.</span></div>
-                    <div class="kv"><span class="k">Max drawdown</span><span>Largest peak-to-trough equity decline during the test.</span></div>
-                    <div class="kv"><span class="k">Sharpe ratio</span><span>Risk-adjusted return. &gt;1.0 is generally considered acceptable.</span></div>
+                    <h3>Summary stats</h3>
+                    <div class="kv"><span class="k">Trades</span><span>Total trades taken, broken down as Wins / Losses / still Open at end of period.</span></div>
+                    <div class="kv"><span class="k">Win Rate</span><span>% of closed trades that were profitable. Also shows avg win R and avg loss R.</span></div>
+                    <div class="kv"><span class="k">Expectancy</span><span>Average R per trade. Positive = the strategy has edge over this period.</span></div>
+                    <div class="kv"><span class="k">Total R</span><span>Cumulative R earned across all trades. The equity curve plots this over time.</span></div>
+                    <div class="kv"><span class="k">Max Drawdown</span><span>Largest peak-to-trough drop in cumulative R during the test.</span></div>
+
+                    <h3>Equity curve</h3>
+                    <p>Plots cumulative R over time (not dollar equity). The zero line is shown as a dashed reference. A rising curve = positive expectancy over the period.</p>
+
+                    <h3>Trades table</h3>
+                    <p>Every simulated trade with entry date, action (BUY/SELL), entry/stop/target prices, outcome (win/loss/open), R multiple, exit date, bars held, and tier. Exportable as CSV.</p>
 
                     <h3>Limitations</h3>
                     <ul>
                         <li>No slippage or commission modelling — live results will differ.</li>
-                        <li>Signals are generated bar-by-bar with no lookahead, but fills assume the next bar's open price.</li>
+                        <li>Fills assume the next bar's open price after a signal bar.</li>
                         <li>Only tests one symbol at a time — portfolio-level backtesting is not supported.</li>
                     </ul>
                 </div>
@@ -236,7 +320,7 @@
 
     <script>
     function switchHelpTab(tab) {
-        ['overview','scanner','analysis','bot','positions','backtest'].forEach(t => {
+        ['overview','scanner','analysis','pulse','bot','positions','backtest'].forEach(t => {
             document.getElementById(`hpanel-${t}`).classList.toggle('hidden', t !== tab);
             document.getElementById(`htab-${t}`).classList.toggle('tab-active', t === tab);
         });
