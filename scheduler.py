@@ -4,15 +4,25 @@ scheduler.py — APScheduler wrapper for the autonomous trading bot.
 Registers all background jobs and starts the scheduler alongside the Flask app.
 All jobs run in a thread pool so they never block the request thread.
 
-Jobs
-────
+Equity watchlist jobs
+─────────────────────
   market_open_snapshot  — 9:30 ET daily (Mon–Fri): snapshot equity, reset halt
   long_review           — 9:35 ET daily (Mon–Fri): review long (daily) positions
-  exit_poller           — every 5 min during market hours: detect closed positions
-  swing_review          — every hour during market hours: review swing positions
-  swing_scan            — every hour during market hours: scan for swing signals
-  short_scan            — every 15 min during market hours: scan for short signals
   long_scan             — 9:40 ET daily (Mon–Fri): scan for long signals
+  exit_poller           — every 5 min: detect closed positions
+  swing_review          — every 60 min: review swing positions
+  swing_scan            — every 60 min: scan for swing signals
+  short_scan            — every 15 min: scan for short signals
+
+Crypto watchlist jobs (24/7 — no market-hours gates)
+─────────────────────────────────────────────────────
+  market_open_snapshot  — midnight ET daily: snapshot equity, reset halt
+  long_review           — 00:05 ET daily: review long (daily) positions
+  long_scan             — 00:10 ET daily: scan for long signals
+  exit_poller           — every 5 min: detect closed positions (unchanged)
+  swing_review          — every 60 min: review swing positions (unchanged)
+  swing_scan            — every 60 min: scan for swing signals (unchanged)
+  short_scan            — every 15 min: scan for short signals (unchanged)
 """
 
 from __future__ import annotations
@@ -48,7 +58,7 @@ def _job_market_open_snapshot(bot, config) -> None:
 
 def _job_exit_poller(bot, config) -> None:
     try:
-        from strategies.auto_manager import _load_state, detect_exits, is_tradeable_now
+        from strategies.auto_manager import _load_state, detect_exits
         # Exit detection runs whenever any position could have been closed.
         # Crypto positions can close 24/7; equity positions only during market hours.
         # We run the poller unconditionally and let detect_exits handle the routing.
@@ -108,6 +118,17 @@ def _job_short_scan(bot, config) -> None:
 def start(bot, config) -> BackgroundScheduler:
     """
     Start the background scheduler and register all jobs.
+
+    The trigger schedule for the three daily jobs (snapshot, long_review, long_scan)
+    depends on whether the configured watchlist is a crypto list:
+
+      Equity  — 9:30 / 9:35 / 9:40 ET Mon–Fri (NYSE market open)
+      Crypto  — 00:00 / 00:05 / 00:10 ET daily (midnight, 7 days a week)
+
+    The interval jobs (exit_poller, swing_review, swing_scan, short_scan) run on
+    the same cadence regardless of asset class — run_position_review and
+    run_entry_scan gate themselves internally via is_tradeable_now().
+
     Safe to call multiple times — returns the existing scheduler if already running.
     """
     global _scheduler
@@ -116,44 +137,63 @@ def start(bot, config) -> BackgroundScheduler:
         logger.info("[scheduler] Already running — skipping start")
         return _scheduler
 
+    from strategies.auto_manager import is_crypto_watchlist
+    crypto_mode = is_crypto_watchlist(config)
+
     _scheduler = BackgroundScheduler(timezone=_ET)
 
-    # ── Daily jobs (ET cron) ──────────────────────────────────────────────────
+    # ── Daily jobs — trigger depends on asset class ───────────────────────────
 
-    # 9:30 ET — snapshot opening equity, reset daily halt
+    if crypto_mode:
+        # Crypto: midnight ET, 7 days a week
+        snapshot_trigger    = CronTrigger(hour=0, minute=0,  timezone=_ET)
+        long_review_trigger = CronTrigger(hour=0, minute=5,  timezone=_ET)
+        long_scan_trigger   = CronTrigger(hour=0, minute=10, timezone=_ET)
+        snapshot_name    = "Crypto midnight equity snapshot"
+        long_review_name = "Long position review (crypto)"
+        long_scan_name   = "Long timeframe entry scan (crypto)"
+        logger.info("[scheduler] Crypto watchlist detected — daily jobs scheduled at midnight ET")
+    else:
+        # Equity: 9:30 / 9:35 / 9:40 ET Mon–Fri
+        snapshot_trigger    = CronTrigger(day_of_week="mon-fri", hour=9, minute=30, timezone=_ET)
+        long_review_trigger = CronTrigger(day_of_week="mon-fri", hour=9, minute=35, timezone=_ET)
+        long_scan_trigger   = CronTrigger(day_of_week="mon-fri", hour=9, minute=40, timezone=_ET)
+        snapshot_name    = "Market open equity snapshot"
+        long_review_name = "Long position review"
+        long_scan_name   = "Long timeframe entry scan"
+        logger.info("[scheduler] Equity watchlist detected — daily jobs scheduled at 9:30 ET Mon–Fri")
+
     _scheduler.add_job(
         _job_market_open_snapshot,
-        CronTrigger(day_of_week="mon-fri", hour=9, minute=30, timezone=_ET),
+        snapshot_trigger,
         args=[bot, config],
         id="market_open_snapshot",
-        name="Market open equity snapshot",
+        name=snapshot_name,
         replace_existing=True,
         misfire_grace_time=300,
     )
 
-    # 9:35 ET — review long (daily) positions
     _scheduler.add_job(
         _job_long_review,
-        CronTrigger(day_of_week="mon-fri", hour=9, minute=35, timezone=_ET),
+        long_review_trigger,
         args=[bot, config],
         id="long_review",
-        name="Long position review",
+        name=long_review_name,
         replace_existing=True,
         misfire_grace_time=300,
     )
 
-    # 9:40 ET — scan for long signals
     _scheduler.add_job(
         _job_long_scan,
-        CronTrigger(day_of_week="mon-fri", hour=9, minute=40, timezone=_ET),
+        long_scan_trigger,
         args=[bot, config],
         id="long_scan",
-        name="Long timeframe entry scan",
+        name=long_scan_name,
         replace_existing=True,
         misfire_grace_time=300,
     )
 
-    # ── Interval jobs ─────────────────────────────────────────────────────────
+    # ── Interval jobs — same cadence for both equity and crypto ───────────────
 
     # Every 5 min — exit detection poller
     _scheduler.add_job(
@@ -200,7 +240,8 @@ def start(bot, config) -> BackgroundScheduler:
     )
 
     _scheduler.start()
-    logger.info("[scheduler] Started — all jobs registered")
+    mode_label = "crypto (24/7)" if crypto_mode else "equity (market hours)"
+    logger.info(f"[scheduler] Started — all jobs registered ({mode_label} mode)")
     return _scheduler
 
 

@@ -17,9 +17,8 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -28,6 +27,9 @@ _ET = ZoneInfo("America/New_York")
 _STATE_PATH   = os.path.join("data", "bot_state.json")
 _ACTIONS_PATH = os.path.join("data", "bot_actions.json")
 _TRADES_PATH  = os.path.join("data", "trades.json")
+
+# Crypto watchlist keys — these trade 24/7 and need different scheduling logic.
+_CRYPTO_WATCHLISTS = {"crypto_top10", "crypto_all"}
 
 
 # ── State helpers ─────────────────────────────────────────────────────────────
@@ -116,6 +118,18 @@ def is_tradeable_now(symbol: str) -> bool:
     if classify_symbol(symbol) == AssetType.CRYPTO:
         return True
     return is_market_hours()
+
+
+def is_crypto_watchlist(config) -> bool:
+    """
+    Return True if the configured scan watchlist is a crypto list.
+
+    Crypto watchlists trade 24/7 and require different scheduling:
+      - No market-hours gate on position review
+      - Daily snapshot fires at midnight ET instead of 9:30 ET
+      - Halt resets daily at midnight ET instead of market open
+    """
+    return config.BOT_SCAN_WATCHLIST in _CRYPTO_WATCHLISTS
 
 
 # ── Circuit breakers ──────────────────────────────────────────────────────────
@@ -218,12 +232,16 @@ def run_position_review(bot, config, state: dict, timeframe: str) -> None:
     """
     Review all open positions for the given timeframe and act on verdicts.
 
+    For equity watchlists: gated to regular market hours Mon–Fri 09:30–16:00 ET.
+    For crypto watchlists: runs 24/7 — crypto positions can be reviewed any time.
+
     TRAIL_STOP → adjust_orders() if suggested stop differs by > $0.01
     EXIT       → close_position()
     """
     from strategies.position_manager import PositionReviewer
 
-    if not is_market_hours():
+    # Gate equity reviews to market hours; crypto reviews run 24/7.
+    if not is_crypto_watchlist(config) and not is_market_hours():
         logger.debug(f"Position review ({timeframe}) skipped — outside market hours")
         return
 
@@ -255,6 +273,11 @@ def run_position_review(bot, config, state: dict, timeframe: str) -> None:
 
         # Only review positions that match the current review timeframe
         if pos_tf != timeframe:
+            continue
+
+        # For mixed portfolios: skip equity positions outside market hours
+        if not is_tradeable_now(sym):
+            logger.debug(f"Skipping {sym} review — outside tradeable hours")
             continue
 
         if not _cooldown_ok(sym, state, cooldown_hours=1):
@@ -329,6 +352,21 @@ def run_position_review(bot, config, state: dict, timeframe: str) -> None:
 
 # ── Entry scan loop ───────────────────────────────────────────────────────────
 
+def _resolve_watchlist_symbols(config) -> list:
+    """
+    Return the symbol list for the configured watchlist.
+    Dynamic lists (crypto_all, all_universe) are resolved from their caches.
+    """
+    from screeners.market_scanner import SYMBOL_LISTS
+    from screeners.symbol_lists import load_cached_crypto_universe, load_cached_universe
+    list_name = config.BOT_SCAN_WATCHLIST
+    if list_name == "crypto_all":
+        return load_cached_crypto_universe()
+    if list_name == "all_universe":
+        return load_cached_universe()
+    return list(SYMBOL_LISTS.get(list_name, []))
+
+
 def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
     """
     Scan the configured watchlist for new signals on the given timeframe.
@@ -337,20 +375,10 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
     from screeners.market_scanner import MarketScanner
 
     # Crypto watchlists trade 24/7; equity watchlists are gated to market hours.
-    # We check the first symbol in the resolved list to determine the asset class.
-    # Dynamic lists (all_universe, crypto_all) are resolved via their loader functions.
-    from screeners.market_scanner import SYMBOL_LISTS
-    from screeners.symbol_lists import load_cached_crypto_universe, load_cached_universe
-    list_name = config.BOT_SCAN_WATCHLIST
-    if list_name == "crypto_all":
-        sample_symbols = load_cached_crypto_universe()
-    elif list_name == "all_universe":
-        sample_symbols = load_cached_universe()
-    else:
-        sample_symbols = SYMBOL_LISTS.get(list_name, [])
+    sample_symbols = _resolve_watchlist_symbols(config)
     first_sym = sample_symbols[0] if sample_symbols else ""
     if not is_tradeable_now(first_sym):
-        logger.debug(f"Entry scan ({timeframe}) skipped — outside tradeable hours for {list_name}")
+        logger.debug(f"Entry scan ({timeframe}) skipped — outside tradeable hours for {config.BOT_SCAN_WATCHLIST}")
         return
 
     ok, reason = check_circuit_breakers(bot, config, state)
@@ -495,12 +523,18 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
 # ── Daily open equity snapshot ────────────────────────────────────────────────
 
 def snapshot_daily_equity(bot, state: dict) -> None:
-    """Record today's opening equity for the daily loss circuit breaker."""
+    """
+    Record today's opening equity for the daily loss circuit breaker.
+    Also resets the daily halt flag.
+
+    For equity watchlists: called at 9:30 ET (market open).
+    For crypto watchlists: called at midnight ET (start of crypto trading day).
+    """
     try:
         account = bot.get_account()
         equity  = account.get("equity", 0)
         state["daily_open_equity"] = equity
-        state["halted"] = False          # reset halt at market open
+        state["halted"] = False          # reset halt at start of new trading day
         _save_state(state)
         _log_action("DAILY_OPEN", None, {"equity": equity}, f"Daily open equity: ${equity:,.2f}")
     except Exception as e:
