@@ -9,17 +9,15 @@ let scanResults = [];   // all results from the current/loaded scan
 let _sortKey = 'score';
 let _sortAsc = false;
 
-// Grade ordering for filter comparisons
-const GRADE_ORDER = { A: 4, B: 3, C: 2, D: 1 };
+// Text filter state
+let _filterText = '';
+let _filterTimer = null;
 
 const LIST_LABELS = {
-    sp500_top100:    'S&P 500 Top 100',
-    nasdaq100_top50: 'NASDAQ 100 Top 50',
-    sector_etfs:     'Sector ETFs',
-    russell2000:     'Russell 2000 Sample',
-    all_sectors:     'All Sectors',
-    all_universe:    'Full Universe',
-    custom:          'Custom List',
+    all_sectors:  'All Sectors',
+    all_universe: 'Full Universe',
+    crypto_all:   'All Crypto',
+    custom:       'Custom List',
 };
 
 // ── Scan control ──────────────────────────────────────────────────────────────
@@ -47,6 +45,8 @@ function startScan() {
     if (scanSource) { scanSource.close(); scanSource = null; }
 
     scanResults = [];
+    _filterText = '';
+    document.getElementById('scan-filter-input').value = '';
     resetUI();
 
     const params = new URLSearchParams({ list_name: listName, custom, timeframe });
@@ -112,6 +112,8 @@ async function loadFromCache() {
         }
 
         scanResults = data.results;
+        _filterText = '';
+        document.getElementById('scan-filter-input').value = '';
         resetUI();
         renderAllRows();
 
@@ -195,11 +197,30 @@ function onError(evt) {
     showScanStatus('error', evt.message || 'Unknown error');
 }
 
-// ── Filtering & sorting ───────────────────────────────────────────────────────
+// ── Text filter ───────────────────────────────────────────────────────────────
 
-function applyFilters() {
-    renderAllRows();
+function onFilterInput(value) {
+    // Debounce — wait 150ms after the user stops typing before re-rendering
+    clearTimeout(_filterTimer);
+    _filterTimer = setTimeout(() => {
+        _filterText = value.trim().toLowerCase();
+        renderAllRows();
+    }, 150);
 }
+
+function _matchesFilter(r) {
+    if (!_filterText) return true;
+    // Match against symbol, regime, signal, grade — the most useful columns
+    const haystack = [
+        r.symbol  || '',
+        r.regime  || '',
+        r.signal  || '',
+        r.grade   || '',
+    ].join(' ').toLowerCase();
+    return haystack.includes(_filterText);
+}
+
+// ── Sorting ───────────────────────────────────────────────────────────────────
 
 function sortBy(key) {
     if (_sortKey === key) {
@@ -211,24 +232,8 @@ function sortBy(key) {
     renderAllRows();
 }
 
-function _filteredSorted() {
-    const gradeFilter  = document.getElementById('scan-grade-filter').value;
-    const signalFilter = document.getElementById('scan-signal-filter').value;
-
-    let rows = scanResults.filter(r => {
-        // Grade filter
-        if (gradeFilter) {
-            const minOrder = GRADE_ORDER[gradeFilter] || 0;
-            if ((GRADE_ORDER[r.grade] || 0) < minOrder) return false;
-        }
-        // Signal filter
-        if (signalFilter === 'BUY'    && r.signal !== 'BUY')  return false;
-        if (signalFilter === 'SELL'   && r.signal !== 'SELL') return false;
-        if (signalFilter === 'SIGNAL' && r.signal === 'NONE') return false;
-        return true;
-    });
-
-    rows.sort((a, b) => {
+function _sorted(rows) {
+    return rows.slice().sort((a, b) => {
         let av = a[_sortKey], bv = b[_sortKey];
         if (typeof av === 'string') av = av.toLowerCase();
         if (typeof bv === 'string') bv = bv.toLowerCase();
@@ -236,8 +241,6 @@ function _filteredSorted() {
         if (bv == null) bv = _sortAsc ? Infinity : -Infinity;
         return _sortAsc ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
     });
-
-    return rows;
 }
 
 // ── Table rendering ───────────────────────────────────────────────────────────
@@ -245,16 +248,19 @@ function _filteredSorted() {
 function renderAllRows() {
     const tbody = document.getElementById('scan-results-body');
     tbody.innerHTML = '';
-    const rows = _filteredSorted();
+    const rows = _sorted(scanResults.filter(_matchesFilter));
     if (rows.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="12" class="text-center text-base-content/40 py-6 text-sm">No results match the current filters.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="12" class="text-center text-base-content/40 py-6 text-sm">No results match the current filter.</td></tr>';
         return;
     }
-    rows.forEach(r => _insertRow(r, tbody));
+    rows.forEach(r => tbody.appendChild(_buildRow(r)));
 }
 
 function appendRow(r) {
-    // During live scan: insert signals at top, others at bottom
+    // During live scan: insert signals at top, others at bottom.
+    // Respect active text filter — don't show rows that don't match.
+    if (!_matchesFilter(r)) return;
+
     const tbody = document.getElementById('scan-results-body');
     const placeholder = tbody.querySelector('td[colspan]');
     if (placeholder) placeholder.closest('tr').remove();
@@ -265,10 +271,6 @@ function appendRow(r) {
     } else {
         tbody.appendChild(row);
     }
-}
-
-function _insertRow(r, tbody) {
-    tbody.appendChild(_buildRow(r));
 }
 
 function _buildRow(r) {
@@ -311,7 +313,6 @@ function _buildRow(r) {
 }
 
 function _gradeBadge(grade, score) {
-    // "—" means no signal — show a neutral dash, not a grade badge
     if (!grade || grade === '—') return '<span class="text-base-content/30 text-xs">—</span>';
     if (grade === 'D') return '<span class="badge badge-xs badge-ghost">D</span>';
     const cls = grade === 'A' ? 'badge-success' :
@@ -482,7 +483,6 @@ async function refreshUniverse() {
             const cryptoCount = data.crypto_count != null ? ` + ${data.crypto_count} crypto` : '';
             showScanStatus('success', `Universe refreshed — ${equityCount} equity${cryptoCount} symbols cached.`);
             checkUniverseInfo();
-            // Close dropdown
             document.activeElement?.blur();
         } else {
             showScanStatus('error', data.error || 'Universe refresh failed.');
