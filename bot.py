@@ -9,7 +9,6 @@ from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
-from alpaca.data.enums import DataFeed
 import pandas as pd
 import json
 from datetime import datetime, timedelta
@@ -142,7 +141,6 @@ class TradingBot:
             start=start,
             end=end,
             limit=10000,
-            feed=DataFeed.IEX,
         )
         bars = self.data_client.get_stock_bars(request).df
         if bars.empty:
@@ -160,7 +158,6 @@ class TradingBot:
                     start=start,
                     end=end,
                     limit=10000,
-                    feed=DataFeed.IEX,
                 )
                 spy_bars = self.data_client.get_stock_bars(spy_req).df
                 if not spy_bars.empty:

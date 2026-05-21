@@ -285,7 +285,6 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
             bot.config.ALPACA_API_KEY     = profile["api_key"]
             bot.config.ALPACA_SECRET_KEY  = profile["secret_key"]
             bot.config.PAPER_TRADING      = paper
-            bot._data_cache.clear()
 
             logger.info(f"Activated profile '{profile['name']}' (paper={paper})")
             return {
@@ -328,7 +327,6 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
             bot.config.ALPACA_API_KEY    = api_key
             bot.config.ALPACA_SECRET_KEY = secret_key
             bot.config.PAPER_TRADING     = paper
-            bot._data_cache.clear()
 
             saved_profile = None
             if name:
