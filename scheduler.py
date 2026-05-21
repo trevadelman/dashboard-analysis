@@ -242,6 +242,23 @@ def start(bot, config) -> BackgroundScheduler:
     _scheduler.start()
     mode_label = "crypto (24/7)" if crypto_mode else "equity (market hours)"
     logger.info(f"[scheduler] Started — all jobs registered ({mode_label} mode)")
+
+    # If no daily open equity has been recorded yet today, snapshot immediately
+    # so the circuit breaker has a baseline from the moment the bot starts.
+    try:
+        from strategies.auto_manager import _load_state, snapshot_daily_equity
+        import threading
+        state = _load_state()
+        if not state.get("daily_open_equity"):
+            logger.info("[scheduler] No daily open equity on record — snapshotting now")
+            threading.Thread(
+                target=_job_market_open_snapshot,
+                args=[bot, config],
+                daemon=True,
+            ).start()
+    except Exception as e:
+        logger.warning(f"[scheduler] Startup equity snapshot failed: {e}")
+
     return _scheduler
 
 
