@@ -28,8 +28,15 @@ _STATE_PATH   = os.path.join("data", "bot_state.json")
 _ACTIONS_PATH = os.path.join("data", "bot_actions.json")
 _TRADES_PATH  = os.path.join("data", "trades.json")
 
+# Maximum number of entries to keep in bot_actions.json.
+# Older entries are trimmed on every write to prevent unbounded growth.
+_MAX_ACTIONS = 5000
+
 # Crypto watchlist keys — these trade 24/7 and need different scheduling logic.
 _CRYPTO_WATCHLISTS = {"crypto_top10", "crypto_all"}
+
+# Grade ordering — used to enforce BOT_MIN_GRADE.
+_GRADE_ORDER = {"A": 4, "B": 3, "C": 2, "D": 1}
 
 
 # ── State helpers ─────────────────────────────────────────────────────────────
@@ -71,6 +78,9 @@ def _log_action(action_type: str, symbol: str | None, details: dict, result: str
         except FileNotFoundError:
             actions = []
         actions.append(entry)
+        # Trim to the most recent _MAX_ACTIONS entries to prevent unbounded growth.
+        if len(actions) > _MAX_ACTIONS:
+            actions = actions[-_MAX_ACTIONS:]
         with open(_ACTIONS_PATH, "w") as f:
             json.dump(actions, f, indent=2, default=str)
     except Exception as e:
@@ -228,6 +238,37 @@ def _record_action_time(symbol: str, state: dict) -> None:
     state["last_action_time"][symbol.upper()] = datetime.now(_ET).isoformat()
 
 
+def _apply_trail_or_raise(bot, sym: str, result, state: dict, action_label: str) -> None:
+    """
+    Shared helper for TRAIL_STOP, PARTIAL_PROFIT, and RAISE_TARGET verdicts.
+
+    All three verdicts want to adjust the stop and/or target — the difference
+    is only in the reason logged.  Centralising the adjust_orders call here
+    keeps the review loop DRY.
+    """
+    new_stop     = result.suggested_stop
+    new_target   = result.suggested_target
+    current_stop = result.current_stop
+
+    stop_changed = (
+        new_stop is not None
+        and current_stop is not None
+        and abs(new_stop - current_stop) > 0.01
+    )
+    if stop_changed or new_target is not None:
+        adj = bot.adjust_orders(
+            sym,
+            new_stop=new_stop if stop_changed else None,
+            new_target=new_target,
+        )
+        _record_action_time(sym, state)
+        _log_action(
+            action_label, sym,
+            {"new_stop": new_stop, "new_target": new_target, "adj_result": adj},
+            adj.get("status", "unknown"),
+        )
+
+
 def run_position_review(bot, config, state: dict, timeframe: str) -> None:
     """
     Review all open positions for the given timeframe and act on verdicts.
@@ -235,8 +276,11 @@ def run_position_review(bot, config, state: dict, timeframe: str) -> None:
     For equity watchlists: gated to regular market hours Mon–Fri 09:30–16:00 ET.
     For crypto watchlists: runs 24/7 — crypto positions can be reviewed any time.
 
-    TRAIL_STOP → adjust_orders() if suggested stop differs by > $0.01
-    EXIT       → close_position()
+    TRAIL_STOP     → adjust_orders() if suggested stop differs by > $0.01
+    PARTIAL_PROFIT → adjust_orders() to trail the stop (partial close not supported
+                     on bracket orders; trailing the stop locks in profit instead)
+    RAISE_TARGET   → adjust_orders() with new target and trailed stop
+    EXIT           → close_position()
     """
     from strategies.position_manager import PositionReviewer
 
@@ -326,27 +370,15 @@ def run_position_review(bot, config, state: dict, timeframe: str) -> None:
             )
 
             if verdict == "TRAIL_STOP":
-                new_stop     = result.suggested_stop
-                new_target   = result.suggested_target
-                current_stop = result.current_stop
+                _apply_trail_or_raise(bot, sym, result, state, "TRAIL_STOP_APPLIED")
 
-                stop_changed = (
-                    new_stop is not None
-                    and current_stop is not None
-                    and abs(new_stop - current_stop) > 0.01
-                )
-                if stop_changed or new_target is not None:
-                    adj = bot.adjust_orders(
-                        sym,
-                        new_stop=new_stop if stop_changed else None,
-                        new_target=new_target,
-                    )
-                    _record_action_time(sym, state)
-                    _log_action(
-                        "TRAIL_STOP_APPLIED", sym,
-                        {"new_stop": new_stop, "new_target": new_target, "adj_result": adj},
-                        adj.get("status", "unknown"),
-                    )
+            elif verdict == "PARTIAL_PROFIT":
+                # Alpaca bracket orders don't support partial closes, so we trail
+                # the stop to lock in profit instead of taking shares off.
+                _apply_trail_or_raise(bot, sym, result, state, "TRAIL_STOP_APPLIED")
+
+            elif verdict == "RAISE_TARGET":
+                _apply_trail_or_raise(bot, sym, result, state, "TRAIL_STOP_APPLIED")
 
             elif verdict == "EXIT":
                 close_result = bot.close_position(sym, exit_reason="auto_exit")
@@ -380,17 +412,38 @@ def _resolve_watchlist_symbols(config) -> list:
     return list(SYMBOL_LISTS.get(list_name, []))
 
 
+def _grade_passes_minimum(grade: str | None, min_grade: str) -> bool:
+    """
+    Return True if the signal grade meets or exceeds the configured minimum.
+
+    Grade ordering: A > B > C > D.  A missing or unrecognised grade fails.
+    """
+    if not grade or grade not in _GRADE_ORDER:
+        return False
+    return _GRADE_ORDER.get(grade, 0) >= _GRADE_ORDER.get(min_grade, 0)
+
+
 def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
     """
     Scan the configured watchlist for new signals on the given timeframe.
     Execute bracket orders for signals that are new this cycle and pass all gates.
+
+    Gates (in order):
+      1. Market hours / crypto 24/7
+      2. Circuit breakers (halt, daily loss)
+      3. BOT_AUTONOMOUS flag
+      4. Symbol blacklist
+      5. New-signal deduplication (not seen last cycle)
+      6. Per-symbol entry cooldown
+      7. Grade filter (BOT_MIN_GRADE)
+      8. Tier 4 R:R check (passes_risk_checks)
+      9. can_trade() — position count, existing position, pending orders
+      10. Pending-entries guard — prevents exceeding max_positions within one cycle
     """
     from screeners.market_scanner import MarketScanner
+    from strategies.momentum import SignalHierarchy
 
     # Crypto watchlists trade 24/7; equity watchlists are gated to market hours.
-    # Gate on the watchlist type (is_crypto_watchlist) rather than classifying
-    # the first symbol — the first symbol could change if the list is reordered,
-    # and a mixed list would produce the wrong gate.
     if not is_crypto_watchlist(config) and not is_market_hours():
         logger.debug(f"Entry scan ({timeframe}) skipped — outside market hours for {config.BOT_SCAN_WATCHLIST}")
         return
@@ -425,6 +478,17 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
         from data.settings_store import get_blacklist
         blacklist = get_blacklist()
 
+        min_grade = config.BOT_MIN_GRADE
+
+        # Snapshot current position count once before the loop so the
+        # pending-entries guard is consistent across all signals this cycle.
+        current_positions = bot.get_positions()
+        entries_this_cycle = 0
+
+        # Build a SignalHierarchy for the current timeframe so we can run
+        # Tier 4 (passes_risk_checks) on each auto-entry candidate.
+        tier4_checker = SignalHierarchy(timeframe=timeframe)
+
         for r in results:
             sym    = (r.get("symbol") or "").upper()
             signal = r.get("signal", "NONE")
@@ -450,11 +514,17 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
                 logger.info(f"Entry cooldown active for {sym} — skipping")
                 continue
 
-            # can_trade() gate
-            side = "buy" if signal == "BUY" else "sell"
-            can, reason_ct = bot.can_trade(sym, side)
-            if not can:
-                logger.info(f"can_trade({sym}) failed: {reason_ct}")
+            # Grade filter — skip low-quality setups
+            grade = r.get("grade")
+            if not _grade_passes_minimum(grade, min_grade):
+                logger.info(
+                    f"Entry skipped for {sym} — grade {grade!r} below minimum {min_grade!r}"
+                )
+                _log_action(
+                    "ENTRY_SKIPPED", sym,
+                    {"reason": "grade below minimum", "grade": grade, "min_grade": min_grade, "timeframe": timeframe},
+                    f"Skipped — grade {grade} < {min_grade}",
+                )
                 continue
 
             # Build entry parameters from the scan result
@@ -469,6 +539,26 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
             entry_price  = float(entry_price)
             stop_price   = float(stop_price)
             target_price = float(target_price)
+
+            # Tier 4: R:R and price validity check.
+            # The scanner only runs Tier 1 + Tier 2 for speed.  We must run
+            # Tier 4 here before committing real capital.
+            signal_dict = {
+                "symbol":       sym,
+                "side":         "buy" if signal == "BUY" else "sell",
+                "entry_price":  entry_price,
+                "stop_price":   stop_price,
+                "target_price": target_price,
+            }
+            rr_pass, rr_details = tier4_checker.passes_risk_checks(signal_dict)
+            if not rr_pass:
+                logger.info(f"Entry skipped for {sym} — Tier 4 failed: {rr_details}")
+                _log_action(
+                    "ENTRY_SKIPPED", sym,
+                    {"reason": "Tier 4 R:R check failed", "details": rr_details, "timeframe": timeframe},
+                    f"Skipped — {rr_details[-1] if rr_details else 'R:R check failed'}",
+                )
+                continue
 
             quantity = bot.calculate_position_size(entry_price, stop_price)
             if quantity < 1:
@@ -489,6 +579,32 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
                     },
                     "Skipped — risk-sized quantity < 1 share",
                 )
+                continue
+
+            # Pending-entries guard — prevents exceeding max_positions within
+            # one scan cycle before any orders have filled.
+            if len(current_positions) + entries_this_cycle >= bot.max_positions:
+                logger.info(
+                    f"Entry skipped for {sym} — max positions reached "
+                    f"({len(current_positions)} open + {entries_this_cycle} pending this cycle)"
+                )
+                _log_action(
+                    "ENTRY_SKIPPED", sym,
+                    {
+                        "reason":          "max positions reached",
+                        "open_positions":  len(current_positions),
+                        "pending_entries": entries_this_cycle,
+                        "max_positions":   bot.max_positions,
+                    },
+                    f"Skipped — max positions ({bot.max_positions}) reached",
+                )
+                continue
+
+            # can_trade() gate — checks existing position, pending orders
+            side = "buy" if signal == "BUY" else "sell"
+            can, reason_ct = bot.can_trade(sym, side)
+            if not can:
+                logger.info(f"can_trade({sym}) failed: {reason_ct}")
                 continue
 
             # Submit bracket order
@@ -527,6 +643,7 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
                 }
                 _log_trade(trade_info)
                 _record_action_time(sym, state)
+                entries_this_cycle += 1
 
                 _log_action(
                     "AUTO_ENTRY", sym,
@@ -557,6 +674,73 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
     except Exception as e:
         logger.error(f"Entry scan ({timeframe}) failed: {e}")
         _log_action("SCAN_ERROR", None, {"timeframe": timeframe, "error": str(e)}, "error")
+
+
+# ── Stale order cancellation ──────────────────────────────────────────────────
+
+def cancel_stale_orders(bot, config, state: dict) -> None:
+    """
+    Cancel open limit orders that have been sitting unfilled for too long.
+
+    For equity watchlists: runs at 3:45 ET Mon–Fri (15 min before close).
+    Any limit order older than 4 hours is considered stale — the setup has
+    moved on and we don't want it filling at the open the next day.
+
+    For crypto watchlists: not called (crypto orders don't expire at close).
+    """
+    if not is_market_hours():
+        return
+
+    ok, reason = check_circuit_breakers(bot, config, state)
+    if not ok:
+        logger.info(f"Stale order cancellation skipped — circuit breaker: {reason}")
+        return
+
+    try:
+        all_orders = bot.get_orders(status='open')
+        stale_cutoff = datetime.now(_ET) - timedelta(hours=4)
+        cancelled = []
+
+        for order in all_orders:
+            # Only cancel limit entry orders (not stop/target bracket legs)
+            if order.get("type") != "limit" or order.get("side") != "buy":
+                continue
+            if order.get("order_class") not in ("bracket", None):
+                continue
+
+            created_at_str = order.get("created_at")
+            if not created_at_str:
+                continue
+
+            try:
+                created_at = datetime.fromisoformat(created_at_str)
+                if created_at.tzinfo is None:
+                    created_at = created_at.replace(tzinfo=_ET)
+                # Convert to ET for comparison
+                created_at_et = created_at.astimezone(_ET)
+            except Exception:
+                continue
+
+            if created_at_et < stale_cutoff:
+                try:
+                    bot.trading_client.cancel_order_by_id(order["id"])
+                    cancelled.append(order["symbol"])
+                    logger.info(
+                        f"Cancelled stale limit order for {order['symbol']} "
+                        f"(created {created_at_et.strftime('%H:%M ET')})"
+                    )
+                except Exception as e:
+                    logger.warning(f"Could not cancel stale order {order['id'][:8]}: {e}")
+
+        if cancelled:
+            _log_action(
+                "STALE_ORDERS_CANCELLED", None,
+                {"symbols": cancelled, "count": len(cancelled)},
+                f"Cancelled {len(cancelled)} stale limit order(s): {', '.join(cancelled)}",
+            )
+
+    except Exception as e:
+        logger.error(f"Stale order cancellation failed: {e}")
 
 
 # ── Daily open equity snapshot ────────────────────────────────────────────────

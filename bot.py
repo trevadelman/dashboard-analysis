@@ -252,7 +252,12 @@ class TradingBot:
         max_position_value = equity * (self.max_position_pct / 100)
         cap_based          = int(max_position_value / entry_price)
 
-        return max(1, min(risk_based, cap_based))
+        # Return the raw risk-sized quantity — do NOT floor at 1.
+        # If the risk math produces < 1 share, the position is too small for
+        # the current risk parameters and the caller should skip the entry
+        # rather than override the sizing.  auto_manager.run_entry_scan()
+        # handles the < 1 case explicitly.
+        return min(risk_based, cap_based)
 
     def can_trade(self, symbol, side):
         """

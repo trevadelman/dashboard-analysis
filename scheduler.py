@@ -14,6 +14,7 @@ Equity watchlist jobs
   swing_scan            — every 60 min: scan for swing signals
   short_review          — every 15 min: review short (15-min) positions
   short_scan            — every 15 min: scan for short signals
+  cancel_stale_orders   — 3:45 ET daily (Mon–Fri): cancel unfilled limit orders
 
 Crypto watchlist jobs (24/7 — no market-hours gates)
 ─────────────────────────────────────────────────────
@@ -25,6 +26,7 @@ Crypto watchlist jobs (24/7 — no market-hours gates)
   swing_scan            — every 60 min: scan for swing signals (unchanged)
   short_review          — every 15 min: review short (15-min) positions (unchanged)
   short_scan            — every 15 min: scan for short signals (unchanged)
+  (cancel_stale_orders not registered — crypto orders don't expire at close)
 """
 
 from __future__ import annotations
@@ -122,6 +124,15 @@ def _job_short_scan(bot, config) -> None:
         run_entry_scan(bot, config, state, timeframe="short")
     except Exception as e:
         logger.error(f"[scheduler] short_scan failed: {e}")
+
+
+def _job_cancel_stale_orders(bot, config) -> None:
+    try:
+        from strategies.auto_manager import _load_state, cancel_stale_orders
+        state = _load_state()
+        cancel_stale_orders(bot, config, state)
+    except Exception as e:
+        logger.error(f"[scheduler] cancel_stale_orders failed: {e}")
 
 
 # ── Scheduler lifecycle ───────────────────────────────────────────────────────
@@ -260,6 +271,19 @@ def start(bot, config) -> BackgroundScheduler:
         replace_existing=True,
         misfire_grace_time=60,
     )
+
+    # 3:45 ET Mon–Fri — cancel stale limit orders before market close.
+    # Only registered for equity watchlists; crypto orders don't expire at close.
+    if not crypto_mode:
+        _scheduler.add_job(
+            _job_cancel_stale_orders,
+            CronTrigger(day_of_week="mon-fri", hour=15, minute=45, timezone=_ET),
+            args=[bot, config],
+            id="cancel_stale_orders",
+            name="Cancel stale limit orders",
+            replace_existing=True,
+            misfire_grace_time=300,
+        )
 
     _scheduler.start()
     mode_label = "crypto (24/7)" if crypto_mode else "equity (market hours)"
