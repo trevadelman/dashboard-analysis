@@ -66,10 +66,6 @@ class TradingBot:
         self.max_positions = config.MAX_POSITIONS
         self.risk_percentage = config.RISK_PERCENTAGE
 
-        # Data cache to avoid rate limits
-        self._data_cache = {}
-        self._cache_duration = 300  # 5 minutes
-
         logger.info(f"Trading bot initialized (paper={config.PAPER_TRADING})")
 
     # ===== MARKET DATA =====
@@ -83,7 +79,7 @@ class TradingBot:
 
     def get_market_data(self, symbol, period='1y', interval='1d'):
         """
-        Get historical market data with caching.
+        Get historical market data.
         Routes to the equity or crypto data client based on the symbol.
 
         Args:
@@ -97,28 +93,14 @@ class TradingBot:
         if not self._require_api():
             return pd.DataFrame()
 
-        cache_key = f"{symbol}_{period}_{interval}"
-        if cache_key in self._data_cache:
-            cached_data, cached_time = self._data_cache[cache_key]
-            if time.time() - cached_time < self._cache_duration:
-                logger.debug(f"Using cached data for {symbol}")
-                return cached_data
-
         try:
             if classify_symbol(symbol) == AssetType.CRYPTO:
-                bars = self._get_crypto_data(symbol, period, interval)
+                return self._get_crypto_data(symbol, period, interval)
             else:
-                bars = self._get_equity_data(symbol, period, interval)
-
-            self._data_cache[cache_key] = (bars, time.time())
-            return bars
+                return self._get_equity_data(symbol, period, interval)
 
         except Exception as e:
             logger.error(f"Error getting market data for {symbol}: {e}")
-            if cache_key in self._data_cache:
-                logger.info(f"Using stale cached data for {symbol} due to error")
-                cached_data, _ = self._data_cache[cache_key]
-                return cached_data
             return pd.DataFrame()
 
     def _build_timeframe(self, interval: str):
