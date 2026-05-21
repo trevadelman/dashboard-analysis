@@ -251,8 +251,8 @@ class MarketScanner:
         """Fetch equity bars for a batch of symbols via bar_fetcher."""
         cfg      = TIMEFRAME_CONFIG.get(timeframe, TIMEFRAME_CONFIG["long"])
         interval = cfg["interval"]
-        period   = f"{cfg['days']}d"
-        return fetch_equity_bars_batch(self._data_client, symbols, period, interval)
+        days     = cfg["days"]
+        return fetch_equity_bars_batch(self._data_client, symbols, '5d', interval, extra_days=days - 5)
 
     def _scan_one_from_bars(self, symbol: str, bars: pd.DataFrame, timeframe: str = "long") -> dict | None:
         """
@@ -461,8 +461,8 @@ class MarketScanner:
             return {sym: pd.DataFrame() for sym in symbols}
         cfg      = TIMEFRAME_CONFIG.get(timeframe, TIMEFRAME_CONFIG["long"])
         interval = cfg["interval"]
-        period   = f"{cfg['days']}d"
-        return fetch_crypto_bars_batch(self._crypto_client, symbols, period, interval)
+        days     = cfg["days"]
+        return fetch_crypto_bars_batch(self._crypto_client, symbols, '5d', interval, extra_days=days - 5)
 
     @staticmethod
     def _event(payload: dict) -> str:
