@@ -5,6 +5,63 @@
 // Track LightweightCharts instances so we can destroy them when cards collapse
 const _posCharts = {};
 
+// ── Bot blacklist ─────────────────────────────────────────────────────────────
+
+// Set of symbols currently blacklisted from bot activity (loaded on page init)
+let _blacklist = new Set();
+
+async function loadBlacklist() {
+    try {
+        const res  = await fetch('/api/bot/blacklist');
+        const data = await res.json();
+        _blacklist = new Set((data.blacklisted || []).map(s => s.toUpperCase()));
+    } catch (_) {
+        _blacklist = new Set();
+    }
+}
+
+async function toggleBlacklist(symbol, forceState) {
+    try {
+        const res  = await fetch(`/api/bot/blacklist/${encodeURIComponent(symbol)}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.blacklisted) {
+            _blacklist.add(symbol.toUpperCase());
+        } else {
+            _blacklist.delete(symbol.toUpperCase());
+        }
+        _updateBlacklistBtn(symbol, data.blacklisted);
+        _updateBlacklistToggle(symbol, data.blacklisted);
+    } catch (err) {
+        console.error('Blacklist toggle failed:', err);
+    }
+}
+
+function _updateBlacklistBtn(symbol, blacklisted) {
+    const btn = document.getElementById(`blacklist-btn-${symbol}`);
+    if (!btn) return;
+    if (blacklisted) {
+        btn.title     = 'Bot blacklisted';
+        btn.innerHTML = '<i class="bi bi-robot text-error"></i>';
+        btn.classList.add('btn-error', 'btn-outline');
+        btn.classList.remove('btn-ghost');
+    } else {
+        btn.title     = 'Bot active';
+        btn.innerHTML = '<i class="bi bi-robot"></i>';
+        btn.classList.remove('btn-error', 'btn-outline');
+        btn.classList.add('btn-ghost');
+    }
+}
+
+function _updateBlacklistToggle(symbol, blacklisted) {
+    const toggle = document.getElementById(`blacklist-toggle-${symbol}`);
+    const label  = document.getElementById(`blacklist-label-${symbol}`);
+    if (toggle) toggle.checked = !blacklisted;
+    if (label) {
+        label.textContent = blacklisted ? 'Bot Blacklisted' : 'Bot Managed';
+        label.className   = blacklisted ? 'text-xs text-error font-semibold' : 'text-xs text-base-content/60';
+    }
+}
+
 // ── Price line extraction ─────────────────────────────────────────────────────
 
 function extractPriceLevels(avgEntry, orders) {
@@ -165,6 +222,12 @@ function buildPositionCard(p, orders, expanded) {
             <div class="flex items-center gap-3">
                 <span class="font-bold text-base">${p.symbol}</span>
                 <span class="text-xs text-base-content/60">${p.qty} shares</span>
+                <button id="blacklist-btn-${p.symbol}"
+                        class="btn btn-xs btn-ghost"
+                        title="Bot active — click to blacklist"
+                        onmousedown="event.preventDefault(); event.stopPropagation(); toggleBlacklist('${p.symbol}')">
+                    <i class="bi bi-robot"></i>
+                </button>
             </div>
             <div class="flex items-center gap-4">
                 <div class="text-right hidden sm:block">
@@ -242,10 +305,19 @@ function buildPositionCard(p, orders, expanded) {
                 <!-- RIGHT: position review (auto-runs on expand) -->
                 <div class="flex flex-col">
                     <div class="flex items-center justify-between mb-2">
-                        <span class="text-sm font-semibold flex items-center gap-2">
-                            <i class="bi bi-clipboard2-pulse text-primary"></i>
-                            Position Review
-                        </span>
+                        <div class="flex items-center gap-3">
+                            <span class="text-sm font-semibold flex items-center gap-2">
+                                <i class="bi bi-clipboard2-pulse text-primary"></i>
+                                Position Review
+                            </span>
+                            <label class="flex items-center gap-1.5 cursor-pointer select-none">
+                                <input type="checkbox" id="blacklist-toggle-${p.symbol}"
+                                       class="toggle toggle-xs toggle-primary"
+                                       checked
+                                       onchange="toggleBlacklist('${p.symbol}')" />
+                                <span id="blacklist-label-${p.symbol}" class="text-xs text-base-content/60">Bot Managed</span>
+                            </label>
+                        </div>
                         <span id="review-tf-label-${p.symbol}" class="text-xs text-base-content/50 italic"></span>
                     </div>
                     <div id="review-panel-${p.symbol}" class="flex-1">
@@ -368,6 +440,13 @@ async function loadPositions() {
         container.innerHTML = sorted.map(p =>
             buildPositionCard(p, ordersBySymbol[p.symbol] || [], p.symbol === (urlSymbol || '').toUpperCase())
         ).join('');
+
+        // Render blacklist state for all cards now that they're in the DOM
+        sorted.forEach(p => {
+            const isBlacklisted = _blacklist.has(p.symbol.toUpperCase());
+            _updateBlacklistBtn(p.symbol, isBlacklisted);
+            _updateBlacklistToggle(p.symbol, isBlacklisted);
+        });
 
         // Set the entry timeframe label for each card
         const TF_LABELS = { long: 'Daily', swing: 'Hourly', short: '15-min' };
@@ -903,7 +982,7 @@ async function loadTradeHistory() {
 }
 
 window.addEventListener('load', async () => {
-    await loadTradeTimeframes();
+    await Promise.all([loadTradeTimeframes(), loadBlacklist()]);
     loadPositions();
     loadBotStatus();
     loadBotActions();

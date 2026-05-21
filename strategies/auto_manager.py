@@ -267,12 +267,20 @@ def run_position_review(bot, config, state: dict, timeframe: str) -> None:
         if t.get("symbol") and t.get("timeframe") and not t.get("event"):
             entry_timeframes[t["symbol"].upper()] = t["timeframe"]
 
+    from data.settings_store import get_blacklist
+    blacklist = get_blacklist()
+
     for pos in positions:
         sym = pos["symbol"].upper()
         pos_tf = entry_timeframes.get(sym, "swing")
 
         # Only review positions that match the current review timeframe
         if pos_tf != timeframe:
+            continue
+
+        # Skip positions the user has blacklisted from bot activity
+        if sym in blacklist:
+            logger.debug(f"Skipping {sym} position review — blacklisted from bot activity")
             continue
 
         # For mixed portfolios: skip equity positions outside market hours
@@ -408,6 +416,9 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
         prev_signals: dict = state.get("last_signals", {}).get(timeframe, {})
         new_signals:  dict = {}
 
+        from data.settings_store import get_blacklist
+        blacklist = get_blacklist()
+
         for r in results:
             sym    = (r.get("symbol") or "").upper()
             signal = r.get("signal", "NONE")
@@ -416,6 +427,11 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
                 continue
 
             new_signals[sym] = r
+
+            # Skip symbols the user has blacklisted from bot activity
+            if sym in blacklist:
+                logger.debug(f"Entry scan: skipping {sym} — blacklisted from bot activity")
+                continue
 
             # Only act on signals that are NEW this cycle
             if sym in prev_signals:

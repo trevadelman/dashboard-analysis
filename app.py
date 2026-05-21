@@ -1449,6 +1449,23 @@ Rules: Use markdown headers. Be direct. Use actual numbers from the data. No dis
             logger.error(f"Bot actions error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    @app.get("/api/bot/blacklist")
+    async def bot_blacklist_get(_=Depends(login_required)):
+        """Return the current set of symbols blacklisted from bot activity."""
+        from data.settings_store import get_blacklist
+        return {"blacklisted": sorted(get_blacklist())}
+
+    @app.post("/api/bot/blacklist/{symbol}")
+    async def bot_blacklist_toggle(symbol: str, _=Depends(login_required)):
+        """
+        Toggle a symbol in/out of the bot blacklist.
+        Returns the new state: {"symbol": "AAPL", "blacklisted": true/false}
+        """
+        from data.settings_store import toggle_blacklist
+        symbol = symbol.strip().upper()
+        blacklisted = toggle_blacklist(symbol)
+        return {"symbol": symbol, "blacklisted": blacklisted}
+
     return app
 
 

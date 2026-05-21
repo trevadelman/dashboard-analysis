@@ -32,6 +32,9 @@ DEFAULTS: dict[str, Any] = {
     "bot_max_daily_loss_pct":   "2.0",
     "bot_entry_cooldown_hours": "24",
     "bot_review_timeframes":    "swing,long",
+    # Comma-separated symbols the bot must never touch (entry or management).
+    # Set via the positions page toggle; persists across restarts.
+    "bot_blacklisted_symbols":  "",
 }
 
 # Keys whose values are encrypted at rest
@@ -116,6 +119,30 @@ def get_all_settings() -> dict[str, str]:
                 value = ""
         result[row["key"]] = value
     return result
+
+
+def get_blacklist() -> set[str]:
+    """Return the set of symbols currently blacklisted from bot activity."""
+    raw = get_setting("bot_blacklisted_symbols") or ""
+    return {s.strip().upper() for s in raw.split(",") if s.strip()}
+
+
+def toggle_blacklist(symbol: str) -> bool:
+    """
+    Toggle symbol in/out of the bot blacklist.
+
+    Returns True if the symbol is now blacklisted, False if it was removed.
+    """
+    symbol = symbol.strip().upper()
+    current = get_blacklist()
+    if symbol in current:
+        current.discard(symbol)
+        blacklisted = False
+    else:
+        current.add(symbol)
+        blacklisted = True
+    set_setting("bot_blacklisted_symbols", ",".join(sorted(current)))
+    return blacklisted
 
 
 def init_from_env() -> None:
