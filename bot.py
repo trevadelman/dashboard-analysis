@@ -386,6 +386,133 @@ class TradingBot:
         except Exception as e:
             logger.error(f"Error logging trade: {e}")
 
+    def adjust_orders(self, symbol: str, new_stop: float = None, new_target: float = None) -> dict:
+        """
+        Modify the stop-loss and/or take-profit legs of an open bracket order.
+
+        Alpaca bracket legs are child orders of the parent bracket. We cancel
+        the existing leg and replace it with a new order at the updated price.
+
+        Args:
+            symbol:     Stock symbol
+            new_stop:   New stop price (None = leave unchanged)
+            new_target: New take-profit limit price (None = leave unchanged)
+
+        Returns:
+            dict with status and details of what was changed
+        """
+        if not self._require_api():
+            return {'status': 'error', 'message': 'No Alpaca API connection'}
+
+        from alpaca.trading.requests import ReplaceOrderRequest
+
+        all_orders = self.get_orders(status='all')
+        active_statuses = {'new', 'held', 'accepted', 'pending_new', 'partially_filled'}
+        symbol_orders = [
+            o for o in all_orders
+            if o['symbol'].upper() == symbol.upper()
+            and o['status'] in active_statuses
+        ]
+
+        changed = []
+        errors  = []
+
+        for order in symbol_orders:
+            order_id = order['id']
+
+            # Stop-loss leg
+            if new_stop is not None and order['type'] in ('stop', 'stop_limit'):
+                try:
+                    req = ReplaceOrderRequest(stop_price=round(new_stop, 2))
+                    self.trading_client.replace_order_by_id(order_id, req)
+                    changed.append(f"Stop updated to ${new_stop:.2f} (order {order_id[:8]})")
+                    logger.info(f"Stop order {order_id[:8]} for {symbol} updated to ${new_stop:.2f}")
+                except Exception as e:
+                    errors.append(f"Stop update failed: {e}")
+                    logger.error(f"Failed to update stop for {symbol}: {e}")
+
+            # Take-profit leg (limit sell)
+            if new_target is not None and order['type'] == 'limit' and order['side'] == 'sell':
+                try:
+                    req = ReplaceOrderRequest(limit_price=round(new_target, 2))
+                    self.trading_client.replace_order_by_id(order_id, req)
+                    changed.append(f"Target updated to ${new_target:.2f} (order {order_id[:8]})")
+                    logger.info(f"Target order {order_id[:8]} for {symbol} updated to ${new_target:.2f}")
+                except Exception as e:
+                    errors.append(f"Target update failed: {e}")
+                    logger.error(f"Failed to update target for {symbol}: {e}")
+
+            # Also check nested legs
+            for leg in (order.get('legs') or []):
+                leg_id = leg['id']
+                if new_stop is not None and leg['type'] in ('stop', 'stop_limit'):
+                    try:
+                        req = ReplaceOrderRequest(stop_price=round(new_stop, 2))
+                        self.trading_client.replace_order_by_id(leg_id, req)
+                        changed.append(f"Stop leg updated to ${new_stop:.2f} (leg {leg_id[:8]})")
+                    except Exception as e:
+                        errors.append(f"Stop leg update failed: {e}")
+
+                if new_target is not None and leg['type'] == 'limit':
+                    try:
+                        req = ReplaceOrderRequest(limit_price=round(new_target, 2))
+                        self.trading_client.replace_order_by_id(leg_id, req)
+                        changed.append(f"Target leg updated to ${new_target:.2f} (leg {leg_id[:8]})")
+                    except Exception as e:
+                        errors.append(f"Target leg update failed: {e}")
+
+        if not changed and not errors:
+            return {'status': 'no_orders', 'message': f'No active stop/target orders found for {symbol}'}
+
+        return {
+            'status':  'error' if errors and not changed else 'ok',
+            'changed': changed,
+            'errors':  errors,
+        }
+
+    def close_position(self, symbol: str) -> dict:
+        """
+        Close an open position at market price.
+
+        Cancels all open orders for the symbol first, then submits a
+        market order to flatten the position.
+
+        Args:
+            symbol: Stock symbol
+
+        Returns:
+            dict with status and order details
+        """
+        if not self._require_api():
+            return {'status': 'error', 'message': 'No Alpaca API connection'}
+
+        try:
+            # Cancel all open orders for this symbol first to avoid conflicts
+            all_orders = self.get_orders(status='all')
+            active_statuses = {'new', 'held', 'accepted', 'pending_new'}
+            for order in all_orders:
+                if (order['symbol'].upper() == symbol.upper()
+                        and order['status'] in active_statuses):
+                    try:
+                        self.trading_client.cancel_order_by_id(order['id'])
+                        logger.info(f"Cancelled order {order['id'][:8]} for {symbol} before close")
+                    except Exception as e:
+                        logger.warning(f"Could not cancel order {order['id'][:8]}: {e}")
+
+            # Close the position via Alpaca's close_position endpoint
+            result = self.trading_client.close_position(symbol)
+            logger.info(f"Closed position for {symbol}: order {result.id}")
+            return {
+                'status':   'ok',
+                'order_id': str(result.id),
+                'symbol':   symbol,
+                'message':  f'Position closed at market — order {str(result.id)[:8]}',
+            }
+
+        except Exception as e:
+            logger.error(f"Error closing position for {symbol}: {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def get_trade_history(self, limit=100):
         """Get trade history from JSON file."""
         try:

@@ -385,6 +385,122 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
             logger.error(f"Error updating config: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    @app.get("/api/trades/log")
+    async def get_trade_log(request: Request, _=Depends(login_required)):
+        """
+        Return the local trade log (data/trades.json).
+
+        Each entry includes the timeframe the trade was entered on, which the
+        positions page uses to pre-select the correct review timeframe.
+        """
+        try:
+            return bot.get_trade_history(limit=500)
+        except Exception as e:
+            logger.error(f"Error reading trade log: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/positions/{symbol}/review")
+    async def review_position(
+        symbol: str,
+        request: Request,
+        timeframe: str = "long",
+        _=Depends(login_required),
+    ):
+        """
+        Run a position review for a single symbol.
+
+        Fetches current bars, re-runs Tier 1 + momentum health checks,
+        and returns a verdict with suggested stop/target adjustments.
+
+        The timeframe parameter should match the timeframe the trade was entered
+        on (read from the trade log by the UI). Defaults to 'long'.
+        """
+        if not bot._require_api():
+            return JSONResponse({"error": "No Alpaca credentials"}, status_code=400)
+        try:
+            from strategies.position_manager import PositionReviewer
+            from dataclasses import asdict
+
+            # Fetch position and orders
+            positions = bot.get_positions()
+            position  = next((p for p in positions if p['symbol'].upper() == symbol.upper()), None)
+            if position is None:
+                return JSONResponse({"error": f"No open position for {symbol}"}, status_code=404)
+
+            all_orders = bot.get_orders(status='all')
+            active_statuses = {'new', 'held', 'accepted', 'pending_new', 'partially_filled'}
+            orders = [
+                o for o in all_orders
+                if o['symbol'].upper() == symbol.upper()
+                and o['status'] in active_statuses
+            ]
+
+            # Fetch bars with indicators — use the timeframe the trade was entered on
+            tf_cfg = {'long': ('1y', '1d'), 'swing': ('3mo', '1h'), 'short': ('1mo', '15m')}
+            period, interval = tf_cfg.get(timeframe, ('1y', '1d'))
+            bars = bot.get_market_data(symbol, period=period, interval=interval)
+
+            reviewer = PositionReviewer(timeframe=timeframe)
+            review   = reviewer.review(position, orders, bars)
+
+            # Serialize the dataclass to a plain dict and include the timeframe used
+            result = asdict(review)
+            result['timeframe_used'] = timeframe
+            return result
+
+        except Exception as e:
+            logger.error(f"Position review error for {symbol}: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/positions/{symbol}/adjust")
+    async def adjust_position_orders(
+        symbol: str,
+        request: Request,
+        _=Depends(login_required),
+    ):
+        """
+        Modify the stop-loss and/or take-profit orders for an open position.
+
+        Body: { "stop_price": 145.50, "target_price": 162.00 }
+        Either field is optional — only the provided fields are updated.
+        """
+        if not bot._require_api():
+            return JSONResponse({"error": "No Alpaca credentials"}, status_code=400)
+        try:
+            data       = await request.json()
+            new_stop   = float(data['stop_price'])   if 'stop_price'   in data else None
+            new_target = float(data['target_price']) if 'target_price' in data else None
+
+            if new_stop is None and new_target is None:
+                return JSONResponse({"error": "Provide stop_price and/or target_price"}, status_code=400)
+
+            result = bot.adjust_orders(symbol, new_stop=new_stop, new_target=new_target)
+            if result['status'] == 'error':
+                return JSONResponse(result, status_code=500)
+            return result
+
+        except Exception as e:
+            logger.error(f"Order adjustment error for {symbol}: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/positions/{symbol}/close")
+    async def close_position_endpoint(
+        symbol: str,
+        request: Request,
+        _=Depends(login_required),
+    ):
+        """Close an open position at market price."""
+        if not bot._require_api():
+            return JSONResponse({"error": "No Alpaca credentials"}, status_code=400)
+        try:
+            result = bot.close_position(symbol)
+            if result['status'] == 'error':
+                return JSONResponse(result, status_code=500)
+            return result
+        except Exception as e:
+            logger.error(f"Close position error for {symbol}: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     @app.post("/api/execute_trade")
     async def execute_trade(request: Request, _=Depends(login_required)):
         try:
@@ -441,11 +557,13 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
                 )
             order = bot.trading_client.submit_order(req)
 
+            timeframe = data.get("timeframe", "long")
             trade_info = {
                 "timestamp":  datetime.now().isoformat(),
                 "symbol":     symbol,
                 "side":       side,
                 "entry_type": entry_type,
+                "timeframe":  timeframe,
                 "quantity":   quantity,
                 "entry_price":  entry_price,
                 "stop_price":   stop_price,

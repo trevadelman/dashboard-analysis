@@ -56,7 +56,7 @@ async function initPositionChart(symbol, containerId, levels) {
 
         const chart = LightweightCharts.createChart(container, {
             width:           container.clientWidth,
-            height:          280,
+            height:          200,
             layout:          { backgroundColor: 'transparent', textColor: '#6b7280' },
             grid:            { vertLines: { color: '#e5e7eb' }, horzLines: { color: '#e5e7eb' } },
             crosshair:       { mode: LightweightCharts.CrosshairMode.Normal },
@@ -178,56 +178,108 @@ function buildPositionCard(p, orders, expanded) {
             </div>
         </div>
         <div class="collapse-content">
-            <!-- Stats grid -->
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-                <div class="bg-base-200 rounded-lg p-3">
-                    <div class="text-xs text-base-content/60 mb-1">Avg Entry</div>
-                    <div class="font-semibold font-mono">$${p.avg_entry_price.toFixed(2)}</div>
-                </div>
-                <div class="bg-base-200 rounded-lg p-3">
-                    <div class="text-xs text-base-content/60 mb-1">Current Price</div>
-                    <div class="font-semibold font-mono">$${p.current_price.toFixed(2)}</div>
-                </div>
-                <div class="bg-base-200 rounded-lg p-3">
-                    <div class="text-xs text-base-content/60 mb-1">Market Value</div>
-                    <div class="font-semibold font-mono">$${p.market_value.toFixed(2)}</div>
-                </div>
-                <div class="bg-base-200 rounded-lg p-3">
-                    <div class="text-xs text-base-content/60 mb-1">Unrealized P&L</div>
-                    <div class="${plClass} font-semibold font-mono">${plSign}$${p.unrealized_pl.toFixed(2)}</div>
-                </div>
-            </div>
+            <!-- Two-column layout: left = chart, right = review -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 
-            <!-- Mini chart -->
-            <div class="bg-base-200 rounded-xl p-3 mb-4">
-                <div id="${chartId}" style="height: 280px; width: 100%; position: relative;" class="rounded-lg overflow-hidden">
+                <!-- LEFT: stats + chart + legend -->
+                <div class="flex flex-col gap-3">
+                    <!-- Section header — mirrors "Position Review" on the right -->
+                    <div class="flex items-center justify-between mb-0">
+                        <span class="text-sm font-semibold flex items-center gap-2">
+                            <i class="bi bi-bar-chart-line text-primary"></i>
+                            Position Summary
+                        </span>
+                    </div>
+                    <!-- Stats grid -->
+                    <div class="grid grid-cols-2 gap-2">
+                        <div class="bg-base-200 rounded-lg p-2">
+                            <div class="text-xs text-base-content/60 mb-0.5">Avg Entry</div>
+                            <div class="font-semibold font-mono text-sm">$${p.avg_entry_price.toFixed(2)}</div>
+                        </div>
+                        <div class="bg-base-200 rounded-lg p-2">
+                            <div class="text-xs text-base-content/60 mb-0.5">Current Price</div>
+                            <div class="font-semibold font-mono text-sm">$${p.current_price.toFixed(2)}</div>
+                        </div>
+                        <div class="bg-base-200 rounded-lg p-2">
+                            <div class="text-xs text-base-content/60 mb-0.5">Market Value</div>
+                            <div class="font-semibold font-mono text-sm">$${p.market_value.toFixed(2)}</div>
+                        </div>
+                        <div class="bg-base-200 rounded-lg p-2">
+                            <div class="text-xs text-base-content/60 mb-0.5">Unrealized P&L</div>
+                            <div class="${plClass} font-semibold font-mono text-sm">${plSign}$${p.unrealized_pl.toFixed(2)}</div>
+                        </div>
+                    </div>
+
+                    <!-- Mini chart -->
+                    <div class="bg-base-200 rounded-xl p-2">
+                        <div id="${chartId}" style="height: 200px; width: 100%; position: relative;" class="rounded-lg overflow-hidden">
+                        </div>
+                    </div>
+
+                    <!-- Price level legend -->
+                    <div class="flex flex-wrap gap-3 text-xs">
+                        <span class="flex items-center gap-1.5">
+                            <span class="inline-block w-5 border-t-2 border-dashed border-success"></span>
+                            Entry $${p.avg_entry_price.toFixed(2)}
+                        </span>
+                        ${(() => {
+                            const stopOrder = orders.find(o => (o.type === 'stop' || o.type === 'stop_limit') && o.stop_price);
+                            return stopOrder ? `<span class="flex items-center gap-1.5">
+                                <span class="inline-block w-5 border-t-2 border-dashed border-error"></span>
+                                Stop $${stopOrder.stop_price.toFixed(2)}
+                               </span>` : '';
+                        })()}
+                        ${(() => {
+                            const targetOrder = orders.find(o => o.type === 'limit' && o.side === 'sell' && o.limit_price);
+                            return targetOrder ? `<span class="flex items-center gap-1.5">
+                                <span class="inline-block w-5 border-t-2 border-dashed" style="border-color: #14b8a6;"></span>
+                                Target $${targetOrder.limit_price.toFixed(2)}
+                               </span>` : '';
+                        })()}
+                    </div>
                 </div>
-            </div>
 
-            <!-- Price level legend -->
-            <div class="flex flex-wrap gap-4 text-xs mb-4">
-                <span class="flex items-center gap-1.5">
-                    <span class="inline-block w-6 border-t-2 border-dashed border-success"></span>
-                    Entry $${p.avg_entry_price.toFixed(2)}
-                </span>
-                ${(() => {
-                    const stopOrder = orders.find(o => (o.type === 'stop' || o.type === 'stop_limit') && o.stop_price);
-                    return stopOrder ? `<span class="flex items-center gap-1.5">
-                        <span class="inline-block w-6 border-t-2 border-dashed border-error"></span>
-                        Stop $${stopOrder.stop_price.toFixed(2)}
-                       </span>` : '';
-                })()}
-                ${(() => {
-                    const targetOrder = orders.find(o => o.type === 'limit' && o.side === 'sell' && o.limit_price);
-                    return targetOrder ? `<span class="flex items-center gap-1.5">
-                        <span class="inline-block w-6 border-t-2 border-dashed" style="border-color: #14b8a6;"></span>
-                        Target $${targetOrder.limit_price.toFixed(2)}
-                       </span>` : '';
-                })()}
-            </div>
+                <!-- RIGHT: position review (auto-runs on expand) -->
+                <div class="flex flex-col">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-sm font-semibold flex items-center gap-2">
+                            <i class="bi bi-clipboard2-pulse text-primary"></i>
+                            Position Review
+                        </span>
+                        <span id="review-tf-label-${p.symbol}" class="text-xs text-base-content/50 italic"></span>
+                    </div>
+                    <div id="review-panel-${p.symbol}" class="flex-1">
+                        <div class="flex items-center gap-2 text-sm text-base-content/60 py-3">
+                            <span class="loading loading-spinner loading-sm"></span>
+                            Loading review…
+                        </div>
+                    </div>
+                </div>
 
+            </div>
         </div>
-    </div>`;
+    </div>
+</div>`;
+}
+
+// ── Trade log timeframe lookup ────────────────────────────────────────────────
+
+// Populated once on page load: symbol → timeframe from data/trades.json
+const _tradeTimeframes = {};
+
+async function loadTradeTimeframes() {
+    try {
+        const log = await (await fetch('/api/trades/log')).json();
+        if (!Array.isArray(log)) return;
+        // Most-recent entry per symbol wins (trades are appended chronologically)
+        for (const t of log) {
+            if (t.symbol && t.timeframe) {
+                _tradeTimeframes[t.symbol.toUpperCase()] = t.timeframe;
+            }
+        }
+    } catch (_) {
+        // Non-fatal — falls back to 'long' default
+    }
 }
 
 // ── Card toggle handler ───────────────────────────────────────────────────────
@@ -317,12 +369,35 @@ async function loadPositions() {
             buildPositionCard(p, ordersBySymbol[p.symbol] || [], p.symbol === (urlSymbol || '').toUpperCase())
         ).join('');
 
-        // Init charts for any cards that start expanded
+        // Set the entry timeframe label for each card
+        const TF_LABELS = { long: 'Daily', swing: 'Hourly', short: '15-min' };
+        sorted.forEach(p => {
+            const loggedTf = _tradeTimeframes[p.symbol.toUpperCase()] || 'long';
+            const labelEl  = document.getElementById(`review-tf-label-${p.symbol}`);
+            if (labelEl) {
+                labelEl.textContent = `${TF_LABELS[loggedTf] || loggedTf} timeframe`;
+            }
+            // Store the timeframe on the element so runPositionReview can read it
+            const btn = labelEl ? labelEl.closest('.flex') : null;
+            if (btn) btn.dataset.timeframe = loggedTf;
+        });
+
+        // Init charts and auto-run reviews for any cards that start expanded
         sorted.forEach(p => {
             const isExpanded = p.symbol === (urlSymbol || '').toUpperCase();
             if (isExpanded) {
                 const levels = extractPriceLevels(p.avg_entry_price, ordersBySymbol[p.symbol] || []);
                 initPositionChart(p.symbol, `pos-chart-${p.symbol}`, levels);
+                runPositionReview(p.symbol);
+            }
+        });
+
+        // Auto-run review for all cards (they all start collapsed except the URL one,
+        // but we still want the review ready when the user opens them)
+        sorted.forEach(p => {
+            const isExpanded = p.symbol === (urlSymbol || '').toUpperCase();
+            if (!isExpanded) {
+                runPositionReview(p.symbol);
             }
         });
 
@@ -331,4 +406,246 @@ async function loadPositions() {
     }
 }
 
-window.addEventListener('load', loadPositions);
+// ── Position Review ───────────────────────────────────────────────────────────
+
+const VERDICT_CONFIG = {
+    HOLD:           { badge: 'badge-success',  icon: 'bi-check-circle-fill',   label: 'HOLD',           color: '#22c55e' },
+    TRAIL_STOP:     { badge: 'badge-warning',  icon: 'bi-arrow-up-circle-fill', label: 'TRAIL STOP',     color: '#f59e0b' },
+    RAISE_TARGET:   { badge: 'badge-info',     icon: 'bi-graph-up-arrow',       label: 'RAISE TARGET',   color: '#3b82f6' },
+    PARTIAL_PROFIT: { badge: 'badge-warning',  icon: 'bi-pie-chart-fill',       label: 'PARTIAL PROFIT', color: '#f59e0b' },
+    EXIT:           { badge: 'badge-error',    icon: 'bi-x-circle-fill',        label: 'EXIT',           color: '#ef4444' },
+};
+
+async function runPositionReview(symbol) {
+    const panel   = document.getElementById(`review-panel-${symbol}`);
+    const labelEl = document.getElementById(`review-tf-label-${symbol}`);
+    if (!panel) return;
+
+    // Timeframe is stored on the parent flex container by loadPositions()
+    const tfContainer = labelEl ? labelEl.closest('.flex') : null;
+    const timeframe   = (tfContainer && tfContainer.dataset.timeframe) || _tradeTimeframes[symbol.toUpperCase()] || 'long';
+
+    panel.innerHTML = `<div class="flex items-center gap-2 text-sm text-base-content/60 py-3">
+        <span class="loading loading-spinner loading-sm"></span>
+        Running position review (${timeframe})…
+    </div>`;
+
+    try {
+        const res  = await fetch(`/api/positions/${encodeURIComponent(symbol)}/review?timeframe=${timeframe}`);
+        const data = await res.json();
+
+        if (data.error) {
+            panel.innerHTML = `<div class="alert alert-error text-sm"><span>${data.error}</span></div>`;
+            return;
+        }
+
+        panel.innerHTML = buildReviewPanel(symbol, data);
+
+    } catch (err) {
+        panel.innerHTML = `<div class="alert alert-error text-sm"><span>Review failed: ${err.message}</span></div>`;
+    }
+}
+
+function buildReviewPanel(symbol, r) {
+    const cfg     = VERDICT_CONFIG[r.verdict] || VERDICT_CONFIG.HOLD;
+    const m       = r.momentum || {};
+    const hasSugg = r.suggested_stop !== null || r.suggested_target !== null;
+
+    // Momentum health grid
+    const rsiClass   = m.rsi_trend === 'RISING' ? 'text-success' : m.rsi_trend === 'FALLING' ? 'text-error' : 'text-base-content/60';
+    const slopeClass = m.ema9_slope_trend === 'RISING' ? 'text-success' : m.ema9_slope_trend === 'FALLING' ? 'text-error' : 'text-base-content/60';
+    const rvolClass  = m.rvol_status === 'ELEVATED' ? 'text-success' : m.rvol_status === 'LOW' ? 'text-error' : 'text-base-content/60';
+    const extClass   = m.extension_status === 'EXTENDED' ? 'text-error' : 'text-success';
+    const ema9Class  = m.price_vs_ema9 === 'ABOVE' ? 'text-success' : 'text-error';
+    const regClass   = m.regime === 'BULLISH' ? 'text-success' : m.regime === 'BEARISH' ? 'text-error' : 'text-warning';
+
+    // Suggested adjustment inputs (pre-filled with suggested values)
+    const stopVal   = r.suggested_stop   !== null ? r.suggested_stop   : (r.current_stop   || '');
+    const targetVal = r.suggested_target !== null ? r.suggested_target : (r.current_target || '');
+
+    const adjustSection = `
+        <div class="bg-base-200 rounded-lg p-3 mt-3">
+            <div class="text-xs font-semibold text-base-content/70 mb-2">Adjust Orders</div>
+            <div class="grid grid-cols-2 gap-2 mb-2">
+                <div>
+                    <label class="text-xs text-base-content/60 block mb-1">Stop Price</label>
+                    <input type="number" id="adj-stop-${symbol}" step="0.01"
+                           value="${stopVal}"
+                           class="input input-xs input-bordered w-full font-mono"
+                           placeholder="Stop price" />
+                </div>
+                <div>
+                    <label class="text-xs text-base-content/60 block mb-1">Target Price</label>
+                    <input type="number" id="adj-target-${symbol}" step="0.01"
+                           value="${targetVal}"
+                           class="input input-xs input-bordered w-full font-mono"
+                           placeholder="Target price" />
+                </div>
+            </div>
+            <div class="flex gap-2">
+                <button class="btn btn-xs btn-primary flex-1 gap-1" onclick="applyOrderAdjustment('${symbol}')">
+                    <i class="bi bi-pencil-fill"></i> Apply Adjustment
+                </button>
+                <button class="btn btn-xs btn-error gap-1" onclick="confirmClosePosition('${symbol}')">
+                    <i class="bi bi-x-lg"></i> Close Position
+                </button>
+            </div>
+            <div id="adj-result-${symbol}" class="mt-2"></div>
+        </div>`;
+
+    return `
+        <div class="space-y-3">
+            <!-- Verdict banner -->
+            <div class="flex items-start gap-3 p-3 rounded-lg border"
+                 style="border-color: ${cfg.color}20; background: ${cfg.color}10;">
+                <i class="bi ${cfg.icon} text-xl mt-0.5" style="color: ${cfg.color};"></i>
+                <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="badge ${cfg.badge} badge-sm font-bold">${cfg.label}</span>
+                        <span class="text-xs text-base-content/50">${symbol}</span>
+                    </div>
+                    <p class="text-sm text-base-content/80 leading-snug">${r.reason}</p>
+                </div>
+            </div>
+
+            <!-- Momentum health grid -->
+            <div class="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                <div class="bg-base-200 rounded-lg p-2 text-center">
+                    <div class="text-xs text-base-content/50 mb-0.5">Regime</div>
+                    <div class="text-xs font-bold ${regClass}">${m.regime || '—'}</div>
+                </div>
+                <div class="bg-base-200 rounded-lg p-2 text-center">
+                    <div class="text-xs text-base-content/50 mb-0.5">RSI</div>
+                    <div class="text-xs font-bold ${rsiClass}">${m.rsi !== null ? m.rsi : '—'} <span class="font-normal">(${m.rsi_trend || '—'})</span></div>
+                </div>
+                <div class="bg-base-200 rounded-lg p-2 text-center">
+                    <div class="text-xs text-base-content/50 mb-0.5">EMA9 Slope</div>
+                    <div class="text-xs font-bold ${slopeClass}">${m.ema9_slope !== null ? m.ema9_slope + '%' : '—'}</div>
+                </div>
+                <div class="bg-base-200 rounded-lg p-2 text-center">
+                    <div class="text-xs text-base-content/50 mb-0.5">RVOL</div>
+                    <div class="text-xs font-bold ${rvolClass}">${m.rvol !== null ? m.rvol + 'x' : '—'}</div>
+                </div>
+                <div class="bg-base-200 rounded-lg p-2 text-center">
+                    <div class="text-xs text-base-content/50 mb-0.5">Extension</div>
+                    <div class="text-xs font-bold ${extClass}">${m.extension !== null ? m.extension + 'x ATR' : '—'}</div>
+                </div>
+                <div class="bg-base-200 rounded-lg p-2 text-center">
+                    <div class="text-xs text-base-content/50 mb-0.5">vs EMA9</div>
+                    <div class="text-xs font-bold ${ema9Class}">${m.price_vs_ema9 || '—'}</div>
+                </div>
+            </div>
+
+            ${r.suggested_stop !== null || r.suggested_target !== null ? `
+            <!-- Suggested levels -->
+            <div class="flex flex-wrap gap-3 text-xs">
+                ${r.suggested_stop !== null ? `<span class="flex items-center gap-1.5 bg-warning/10 text-warning px-2 py-1 rounded-lg">
+                    <i class="bi bi-arrow-up-circle"></i>
+                    Suggested Stop: <strong>$${r.suggested_stop.toFixed(2)}</strong>
+                    ${r.current_stop ? `<span class="opacity-60">(was $${r.current_stop.toFixed(2)})</span>` : ''}
+                </span>` : ''}
+                ${r.suggested_target !== null ? `<span class="flex items-center gap-1.5 bg-info/10 text-info px-2 py-1 rounded-lg">
+                    <i class="bi bi-graph-up-arrow"></i>
+                    Suggested Target: <strong>$${r.suggested_target.toFixed(2)}</strong>
+                    ${r.current_target ? `<span class="opacity-60">(was $${r.current_target.toFixed(2)})</span>` : ''}
+                </span>` : ''}
+            </div>` : ''}
+
+            ${adjustSection}
+        </div>`;
+}
+
+async function applyOrderAdjustment(symbol) {
+    const stopInput   = document.getElementById(`adj-stop-${symbol}`);
+    const targetInput = document.getElementById(`adj-target-${symbol}`);
+    const resultEl    = document.getElementById(`adj-result-${symbol}`);
+
+    const body = {};
+    if (stopInput   && stopInput.value.trim())   body.stop_price   = parseFloat(stopInput.value);
+    if (targetInput && targetInput.value.trim()) body.target_price = parseFloat(targetInput.value);
+
+    if (!body.stop_price && !body.target_price) {
+        resultEl.innerHTML = `<div class="alert alert-warning text-xs py-1"><span>Enter at least one price to adjust.</span></div>`;
+        return;
+    }
+
+    resultEl.innerHTML = `<div class="flex items-center gap-2 text-xs text-base-content/60">
+        <span class="loading loading-spinner loading-xs"></span> Updating orders…
+    </div>`;
+
+    try {
+        const res  = await fetch(`/api/positions/${encodeURIComponent(symbol)}/adjust`, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify(body),
+        });
+        const data = await res.json();
+
+        if (data.error || data.status === 'error') {
+            const msg = data.error || (data.errors || []).join('; ') || 'Unknown error';
+            resultEl.innerHTML = `<div class="alert alert-error text-xs py-1"><span>${msg}</span></div>`;
+            return;
+        }
+
+        const changed = (data.changed || []).join('<br>');
+        resultEl.innerHTML = `<div class="alert alert-success text-xs py-1">
+            <i class="bi bi-check-circle-fill"></i>
+            <span>${changed || 'Orders updated'}</span>
+        </div>`;
+
+        // Refresh the position card after a short delay so the new levels show
+        setTimeout(() => loadPositions(), 1500);
+
+    } catch (err) {
+        resultEl.innerHTML = `<div class="alert alert-error text-xs py-1"><span>${err.message}</span></div>`;
+    }
+}
+
+async function confirmClosePosition(symbol) {
+    const resultEl = document.getElementById(`adj-result-${symbol}`);
+
+    // Simple inline confirmation — avoids a modal dependency
+    resultEl.innerHTML = `
+        <div class="alert alert-warning text-xs py-2">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <span>Close <strong>${symbol}</strong> at market? This cannot be undone.</span>
+            <div class="flex gap-2 mt-1">
+                <button class="btn btn-xs btn-error" onclick="executeClosePosition('${symbol}')">Yes, Close</button>
+                <button class="btn btn-xs btn-ghost" onclick="document.getElementById('adj-result-${symbol}').innerHTML=''">Cancel</button>
+            </div>
+        </div>`;
+}
+
+async function executeClosePosition(symbol) {
+    const resultEl = document.getElementById(`adj-result-${symbol}`);
+
+    resultEl.innerHTML = `<div class="flex items-center gap-2 text-xs text-base-content/60">
+        <span class="loading loading-spinner loading-xs"></span> Closing position…
+    </div>`;
+
+    try {
+        const res  = await fetch(`/api/positions/${encodeURIComponent(symbol)}/close`, { method: 'POST' });
+        const data = await res.json();
+
+        if (data.error || data.status === 'error') {
+            resultEl.innerHTML = `<div class="alert alert-error text-xs py-1"><span>${data.error || data.message}</span></div>`;
+            return;
+        }
+
+        resultEl.innerHTML = `<div class="alert alert-success text-xs py-1">
+            <i class="bi bi-check-circle-fill"></i>
+            <span>${data.message || 'Position closed'}</span>
+        </div>`;
+
+        // Reload positions after close
+        setTimeout(() => loadPositions(), 2000);
+
+    } catch (err) {
+        resultEl.innerHTML = `<div class="alert alert-error text-xs py-1"><span>${err.message}</span></div>`;
+    }
+}
+
+window.addEventListener('load', async () => {
+    await loadTradeTimeframes();
+    loadPositions();
+});
