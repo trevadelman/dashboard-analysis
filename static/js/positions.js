@@ -645,7 +645,123 @@ async function executeClosePosition(symbol) {
     }
 }
 
+// ── Trade History ─────────────────────────────────────────────────────────────
+
+const TF_LABELS_HIST = { long: 'Daily', swing: 'Hourly', short: '15-min' };
+
+async function loadTradeHistory() {
+    const container = document.getElementById('trade-history-container');
+    if (!container) return;
+
+    try {
+        const log = await (await fetch('/api/trades/log')).json();
+        if (!Array.isArray(log) || log.length === 0) {
+            container.innerHTML = `<div class="text-center text-base-content/60 py-8">
+                <i class="bi bi-journal-x text-3xl mb-2 block"></i>
+                <p class="text-sm">No trade history yet. Trades will appear here after you execute your first order.</p>
+            </div>`;
+            return;
+        }
+
+        // Pair entry and exit events by symbol (most-recent first)
+        const entries = log.filter(t => !t.event || t.event === 'entry');
+        const exits   = log.filter(t => t.event === 'exit');
+
+        // Build a lookup: symbol → list of exit events (chronological)
+        const exitsBySymbol = {};
+        for (const ex of exits) {
+            const sym = (ex.symbol || '').toUpperCase();
+            if (!exitsBySymbol[sym]) exitsBySymbol[sym] = [];
+            exitsBySymbol[sym].push(ex);
+        }
+
+        // Render entries newest-first, pairing with the closest exit if available
+        const rows = [...entries].reverse().map(entry => {
+            const sym     = (entry.symbol || '').toUpperCase();
+            const exits   = exitsBySymbol[sym] || [];
+            // Match the first exit that happened after this entry
+            const exit    = exits.find(ex => ex.timestamp > entry.timestamp) || null;
+
+            const tf      = entry.timeframe || 'long';
+            const tfLabel = TF_LABELS_HIST[tf] || tf;
+            const date    = entry.timestamp ? new Date(entry.timestamp).toLocaleDateString() : '—';
+            const side    = (entry.side || 'buy').toUpperCase();
+            const sideClass = side === 'BUY' ? 'badge-success' : 'badge-error';
+
+            const entryPx  = entry.entry_price != null ? `$${Number(entry.entry_price).toFixed(2)}` : '—';
+            const stopPx   = entry.stop_price   != null ? `$${Number(entry.stop_price).toFixed(2)}`  : '—';
+            const targetPx = entry.target_price != null ? `$${Number(entry.target_price).toFixed(2)}` : '—';
+            const qty      = entry.quantity != null ? entry.quantity : '—';
+
+            let statusBadge, exitPx, plCell;
+            if (exit) {
+                const exitPrice = exit.exit_price != null ? Number(exit.exit_price) : null;
+                const entryPrice = entry.entry_price != null ? Number(entry.entry_price) : null;
+                exitPx = exitPrice != null ? `$${exitPrice.toFixed(2)}` : '—';
+
+                const pl = exit.unrealized_pl != null
+                    ? Number(exit.unrealized_pl)
+                    : (exitPrice != null && entryPrice != null && qty !== '—'
+                        ? (exitPrice - entryPrice) * Number(qty) : null);
+                const plClass = pl != null ? (pl >= 0 ? 'text-success' : 'text-error') : '';
+                const plSign  = pl != null && pl >= 0 ? '+' : '';
+                plCell = pl != null
+                    ? `<span class="${plClass} font-semibold">${plSign}$${Math.abs(pl).toFixed(2)}</span>`
+                    : '—';
+
+                const reasonLabel = { manual: 'Manual', stop: 'Stop Hit', target: 'Target Hit' };
+                const reasonText  = reasonLabel[exit.exit_reason] || exit.exit_reason || 'Closed';
+                statusBadge = `<span class="badge badge-ghost badge-sm">${reasonText}</span>`;
+            } else {
+                exitPx      = '—';
+                plCell      = '—';
+                statusBadge = `<span class="badge badge-primary badge-sm">Open</span>`;
+            }
+
+            return `<tr class="hover">
+                <td class="font-bold">${sym}</td>
+                <td><span class="badge ${sideClass} badge-sm">${side}</span></td>
+                <td class="text-xs text-base-content/60">${tfLabel}</td>
+                <td class="font-mono text-xs">${date}</td>
+                <td class="font-mono text-xs">${qty}</td>
+                <td class="font-mono text-xs">${entryPx}</td>
+                <td class="font-mono text-xs">${stopPx}</td>
+                <td class="font-mono text-xs">${targetPx}</td>
+                <td class="font-mono text-xs">${exitPx}</td>
+                <td class="font-mono text-xs">${plCell}</td>
+                <td>${statusBadge}</td>
+            </tr>`;
+        }).join('');
+
+        container.innerHTML = `
+            <div class="overflow-x-auto rounded-xl border border-base-300">
+                <table class="table table-sm w-full">
+                    <thead>
+                        <tr class="text-xs text-base-content/60 uppercase">
+                            <th>Symbol</th>
+                            <th>Side</th>
+                            <th>Timeframe</th>
+                            <th>Date</th>
+                            <th>Qty</th>
+                            <th>Entry</th>
+                            <th>Stop</th>
+                            <th>Target</th>
+                            <th>Exit</th>
+                            <th>P&L</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`;
+
+    } catch (err) {
+        container.innerHTML = `<div class="alert alert-error text-sm"><span>Failed to load trade history: ${err.message}</span></div>`;
+    }
+}
+
 window.addEventListener('load', async () => {
     await loadTradeTimeframes();
     loadPositions();
+    loadTradeHistory();
 });

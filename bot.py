@@ -470,15 +470,18 @@ class TradingBot:
             'errors':  errors,
         }
 
-    def close_position(self, symbol: str) -> dict:
+    def close_position(self, symbol: str, exit_price: float = None, exit_reason: str = 'manual') -> dict:
         """
         Close an open position at market price.
 
         Cancels all open orders for the symbol first, then submits a
-        market order to flatten the position.
+        market order to flatten the position. Logs the exit to trades.json
+        so the trade history is complete.
 
         Args:
-            symbol: Stock symbol
+            symbol:      Stock symbol
+            exit_price:  Price at which the position was closed (for the log entry)
+            exit_reason: Why the position was closed ('manual', 'stop', 'target')
 
         Returns:
             dict with status and order details
@@ -487,6 +490,12 @@ class TradingBot:
             return {'status': 'error', 'message': 'No Alpaca API connection'}
 
         try:
+            # Snapshot the position before closing so we can log the exit price
+            positions = self.get_positions()
+            pos = next((p for p in positions if p['symbol'].upper() == symbol.upper()), None)
+            if exit_price is None and pos:
+                exit_price = pos.get('current_price')
+
             # Cancel all open orders for this symbol first to avoid conflicts
             all_orders = self.get_orders(status='all')
             active_statuses = {'new', 'held', 'accepted', 'pending_new'}
@@ -502,6 +511,23 @@ class TradingBot:
             # Close the position via Alpaca's close_position endpoint
             result = self.trading_client.close_position(symbol)
             logger.info(f"Closed position for {symbol}: order {result.id}")
+
+            # Log the exit so the trade history is complete
+            exit_info = {
+                'event':        'exit',
+                'timestamp':    datetime.now().isoformat(),
+                'symbol':       symbol,
+                'exit_reason':  exit_reason,
+                'exit_price':   exit_price,
+                'order_id':     str(result.id),
+            }
+            if pos:
+                exit_info['entry_price']    = pos.get('avg_entry_price')
+                exit_info['quantity']       = pos.get('qty')
+                exit_info['unrealized_pl']  = pos.get('unrealized_pl')
+                exit_info['unrealized_plpc'] = pos.get('unrealized_plpc')
+            self._log_trade(exit_info)
+
             return {
                 'status':   'ok',
                 'order_id': str(result.id),
@@ -683,7 +709,9 @@ class TradingBot:
                 verdicts.append('ERROR')
             elif r.get('signals'):
                 verdicts.append('SIGNAL')
-                all_signals.extend(r['signals'])
+                # Tag each signal with the timeframe it came from so the
+                # execute_trade endpoint can log the correct timeframe.
+                all_signals.extend({**sig, 'timeframe': tf_name} for sig in r['signals'])
             elif r.get('blocked_at', '').startswith('Tier 1'):
                 verdicts.append('NO_TRADE')
             else:
