@@ -56,6 +56,13 @@ SYMBOL_LISTS = {
 # Alpaca accepts up to ~1000 symbols per request; 50 is a safe, fast batch size.
 _BATCH_SIZE = 50
 
+# Crypto batch size is kept small because Alpaca's crypto bars endpoint returns
+# rows across all symbols in a single response.  For intraday timeframes (15-min,
+# hourly) each symbol can have thousands of bars, so a large batch quickly hits
+# the per-response row limit and silently truncates later symbols.
+# 5 symbols × ~2,880 15-min bars (30 days) = ~14,400 rows — safely under the limit.
+_CRYPTO_BATCH_SIZE = 5
+
 # Seconds between batch requests — keeps us well under Alpaca's 200 req/min cap.
 # At 50 symbols/batch and 0.36s/batch: ~8,300 symbols/min theoretical throughput.
 _REQUEST_INTERVAL = 0.36
@@ -113,9 +120,11 @@ class MarketScanner:
         yield self._event({"type": "start", "total": total, "list": list_name, "timeframe": timeframe})
 
         # Fetch the benchmark once for relative strength.
-        # Equity scans use SPY; crypto scans use BTC/USD (or skip if BTC is the list).
+        # Equity scans use SPY; crypto scans use BTC/USD as the benchmark for all
+        # non-BTC pairs.  BTC itself gets an empty benchmark so the RS gate is
+        # bypassed (a symbol cannot be compared to itself).
         if is_crypto_scan:
-            if symbols[0].upper() != "BTC/USD" and self._crypto_client:
+            if self._crypto_client:
                 btc_batch = self._fetch_crypto_bars_batch(["BTC/USD"], timeframe=timeframe)
                 self._benchmark_data = btc_batch.get("BTC/USD", pd.DataFrame())
             else:
@@ -125,9 +134,12 @@ class MarketScanner:
             self._benchmark_data = spy_batch.get("SPY", pd.DataFrame())
         time.sleep(_REQUEST_INTERVAL)
 
-        # Process symbols in batches
-        for batch_start in range(0, total, _BATCH_SIZE):
-            batch = symbols[batch_start : batch_start + _BATCH_SIZE]
+        # Process symbols in batches.
+        # Crypto uses a smaller batch size to avoid hitting Alpaca's per-response
+        # row limit, which silently truncates symbols at the end of large batches.
+        batch_size = _CRYPTO_BATCH_SIZE if is_crypto_scan else _BATCH_SIZE
+        for batch_start in range(0, total, batch_size):
+            batch = symbols[batch_start : batch_start + batch_size]
 
             # Fetch all bars in the batch with a single API call
             if is_crypto_scan:
