@@ -467,13 +467,13 @@
                     <span class="text-xl font-bold px-2 flex items-center gap-2">
                         <i class="bi bi-cpu-fill"></i>
                         Alpaca Trading
+                        <button class="btn btn-ghost btn-xs btn-circle opacity-50 hover:opacity-100" onclick="document.getElementById('help-modal').showModal()" title="Help">
+                            <i class="bi bi-info-circle text-base"></i>
+                        </button>
                     </span>
                 </div>
                 <div class="flex-none gap-2">
                     {% block navbar_right %}
-                    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('help-modal').showModal()" title="Help">
-                        <i class="bi bi-info-circle text-lg"></i>
-                    </button>
                     <button class="btn btn-ghost btn-sm" onclick="document.getElementById('settings-modal').showModal(); loadSettings();" title="Settings">
                         <i class="bi bi-gear-fill text-lg"></i>
                     </button>
