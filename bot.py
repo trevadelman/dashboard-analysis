@@ -9,6 +9,7 @@ from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
+from alpaca.data.enums import DataFeed
 import pandas as pd
 import json
 from datetime import datetime, timedelta
@@ -115,11 +116,12 @@ class TradingBot:
         return tf_map.get(interval, TimeFrame.Day)
 
     def _build_date_range(self, period: str):
-        """Return (start, end) datetime pair for the given period string."""
+        """Return (start, end) timezone-aware datetime pair for the given period string."""
+        from datetime import timezone
         period_days = {
             '1mo': 30, '2w': 14, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730, '5d': 5,
         }
-        end   = datetime.now()
+        end   = datetime.now(timezone.utc)
         start = end - timedelta(days=period_days.get(period, 365))
         return start, end
 
@@ -141,6 +143,7 @@ class TradingBot:
             start=start,
             end=end,
             limit=10000,
+            feed=DataFeed.IEX,
         )
         bars = self.data_client.get_stock_bars(request).df
         if bars.empty:
@@ -158,6 +161,7 @@ class TradingBot:
                     start=start,
                     end=end,
                     limit=10000,
+                    feed=DataFeed.IEX,
                 )
                 spy_bars = self.data_client.get_stock_bars(spy_req).df
                 if not spy_bars.empty:

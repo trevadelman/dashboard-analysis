@@ -18,6 +18,7 @@ import pandas as pd
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from alpaca.data.enums import DataFeed
 from analysis.indicators import TechnicalIndicators
 from analysis.asset_type import AssetType, classify_symbol
 from screeners.symbol_lists import (
@@ -275,6 +276,7 @@ class MarketScanner:
                 start=start,
                 end=end,
                 limit=10000,
+                feed=DataFeed.IEX,
             )
             bars_df = self._data_client.get_stock_bars(request).df
             if bars_df.empty:
