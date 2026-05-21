@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 # Path for the cached asset universe (written by fetch_alpaca_universe)
 _UNIVERSE_CACHE_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'asset_universe.json')
+_CRYPTO_UNIVERSE_CACHE_PATH = os.path.join(os.path.dirname(__file__), '..', 'data', 'crypto_universe.json')
 _UNIVERSE_CACHE_TTL  = 86400  # 24 hours
 
 
@@ -255,6 +256,88 @@ def load_cached_universe() -> List[str]:
     return ALL_SECTOR_SYMBOLS
 
 
+def fetch_alpaca_crypto_universe(trading_client) -> List[str]:
+    """
+    Fetch all tradeable crypto symbols from Alpaca's Assets API.
+
+    Filters:
+      - asset_class = crypto
+      - tradable = True
+      - symbol ends with /USD (USD-quoted pairs only)
+
+    Results are cached to data/crypto_universe.json for 24 hours.
+    Returns the cached list if the cache is fresh.
+
+    Args:
+        trading_client: Alpaca TradingClient instance
+
+    Returns:
+        List of symbol strings in slash format (e.g. "BTC/USD"), sorted alphabetically
+    """
+    cache_path = os.path.normpath(_CRYPTO_UNIVERSE_CACHE_PATH)
+
+    # Return cached result if fresh
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, 'r') as f:
+                cached = json.load(f)
+            age = time.time() - cached.get('fetched_at', 0)
+            if age < _UNIVERSE_CACHE_TTL:
+                logger.info(f"Using cached crypto universe ({len(cached['symbols'])} symbols, "
+                            f"{age/3600:.1f}h old)")
+                return cached['symbols']
+        except Exception as e:
+            logger.warning(f"Could not read crypto universe cache: {e}")
+
+    logger.info("Fetching crypto universe from Alpaca Assets API…")
+    try:
+        from alpaca.trading.requests import GetAssetsRequest
+        from alpaca.trading.enums import AssetClass, AssetStatus
+
+        req    = GetAssetsRequest(asset_class=AssetClass.CRYPTO, status=AssetStatus.ACTIVE)
+        assets = trading_client.get_all_assets(req)
+
+        symbols = sorted([
+            a.symbol for a in assets
+            if a.tradable
+            and a.symbol.endswith('/USD')
+        ])
+
+        logger.info(f"Alpaca returned {len(symbols)} tradeable crypto symbols")
+
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        with open(cache_path, 'w') as f:
+            json.dump({
+                'fetched_at':     time.time(),
+                'fetched_at_iso': datetime.now(timezone.utc).isoformat(),
+                'count':          len(symbols),
+                'symbols':        symbols,
+            }, f)
+
+        return symbols
+
+    except Exception as e:
+        logger.error(f"Failed to fetch Alpaca crypto universe: {e}")
+        logger.info(f"Falling back to CRYPTO_ALL_ALPACA ({len(CRYPTO_ALL_ALPACA)} symbols)")
+        return CRYPTO_ALL_ALPACA
+
+
+def load_cached_crypto_universe() -> List[str]:
+    """
+    Load the cached crypto universe without making any API calls.
+    Returns CRYPTO_ALL_ALPACA if no cache exists.
+    """
+    cache_path = os.path.normpath(_CRYPTO_UNIVERSE_CACHE_PATH)
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, 'r') as f:
+                cached = json.load(f)
+            return cached.get('symbols', CRYPTO_ALL_ALPACA)
+        except Exception:
+            pass
+    return CRYPTO_ALL_ALPACA
+
+
 def get_universe_cache_info() -> dict:
     """Return metadata about the cached universe (age, count, etc.)."""
     cache_path = os.path.normpath(_UNIVERSE_CACHE_PATH)
@@ -348,8 +431,10 @@ def get_crypto_info(limit: int = 300) -> List[Dict[str, Any]]:
 
 # ── Crypto watchlist (Alpaca slash format) ────────────────────────────────────
 
-# Top 10 crypto assets available on Alpaca, in slash format (BTC/USD).
-# Used by the autonomous bot scanner and the settings UI watchlist selector.
+# All crypto assets available on Alpaca, in slash format (BTC/USD).
+# Used by the autonomous bot scanner, the settings UI watchlist selector,
+# and the scanner "Crypto (All Alpaca)" list.
+# Source: https://alpaca.markets/docs/api-references/market-data-api/crypto-pricing-data/
 CRYPTO_TOP10 = [
     "BTC/USD",
     "ETH/USD",
@@ -361,4 +446,34 @@ CRYPTO_TOP10 = [
     "DOGE/USD",
     "UNI/USD",
     "AAVE/USD",
+]
+
+# Full list of crypto assets tradeable on Alpaca (as of 2025).
+# Alpaca supports ~25 crypto pairs — small enough to scan in a single batch.
+CRYPTO_ALL_ALPACA = [
+    "BTC/USD",
+    "ETH/USD",
+    "SOL/USD",
+    "AVAX/USD",
+    "LINK/USD",
+    "LTC/USD",
+    "BCH/USD",
+    "DOGE/USD",
+    "UNI/USD",
+    "AAVE/USD",
+    "XRP/USD",
+    "ADA/USD",
+    "DOT/USD",
+    "MATIC/USD",
+    "SHIB/USD",
+    "XTZ/USD",
+    "ALGO/USD",
+    "BAT/USD",
+    "CRV/USD",
+    "GRT/USD",
+    "MKR/USD",
+    "SUSHI/USD",
+    "YFI/USD",
+    "USDT/USD",
+    "USDC/USD",
 ]

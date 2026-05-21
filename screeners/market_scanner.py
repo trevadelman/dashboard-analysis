@@ -30,7 +30,9 @@ from screeners.symbol_lists import (
     SECTORS,
     ALL_SECTOR_SYMBOLS,
     CRYPTO_TOP10,
+    CRYPTO_ALL_ALPACA,
     load_cached_universe,
+    load_cached_crypto_universe,
 )
 from strategies.momentum import SignalHierarchy, TIMEFRAME_CONFIG
 
@@ -47,6 +49,7 @@ SYMBOL_LISTS = {
     "all_sectors":     ALL_SECTOR_SYMBOLS,
     "all_universe":    None,   # resolved dynamically from cache at scan time
     "crypto_top10":    CRYPTO_TOP10,
+    "crypto_all":      None,   # resolved dynamically from crypto_universe.json cache
 }
 
 # Number of symbols to fetch in a single Alpaca bars request.
@@ -226,6 +229,9 @@ class MarketScanner:
 
         if list_name == "all_universe":
             return load_cached_universe()
+
+        if list_name == "crypto_all":
+            return load_cached_crypto_universe()
 
         return list(SYMBOL_LISTS.get(list_name, []))
 

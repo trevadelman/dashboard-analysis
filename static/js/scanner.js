@@ -478,7 +478,9 @@ async function refreshUniverse() {
         const res = await fetch('/api/scan/universe/refresh', { method: 'POST' });
         const data = await res.json();
         if (res.ok) {
-            showScanStatus('success', `Universe refreshed — ${data.count.toLocaleString()} symbols cached.`);
+            const equityCount = (data.equity_count ?? data.count ?? 0).toLocaleString();
+            const cryptoCount = data.crypto_count != null ? ` + ${data.crypto_count} crypto` : '';
+            showScanStatus('success', `Universe refreshed — ${equityCount} equity${cryptoCount} symbols cached.`);
             checkUniverseInfo();
             // Close dropdown
             document.activeElement?.blur();

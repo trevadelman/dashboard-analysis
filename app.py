@@ -1206,20 +1206,38 @@ Rules: Use markdown headers. Be direct. Use actual numbers from the data. No dis
     @app.post("/api/scan/universe/refresh")
     async def refresh_universe(request: Request, _=Depends(login_required)):
         """
-        Trigger a fresh fetch of the Alpaca asset universe.
-        Deletes the existing cache so the next scan will re-fetch.
+        Trigger a fresh fetch of the Alpaca asset universe (equities + crypto).
+        Deletes existing caches so the next scan will re-fetch from Alpaca.
         """
-        import json as _json
         if not bot._require_api():
             return JSONResponse({"error": "No Alpaca credentials"}, status_code=400)
         try:
-            from screeners.symbol_lists import fetch_alpaca_universe, _UNIVERSE_CACHE_PATH
+            from screeners.symbol_lists import (
+                fetch_alpaca_universe,
+                fetch_alpaca_crypto_universe,
+                _UNIVERSE_CACHE_PATH,
+                _CRYPTO_UNIVERSE_CACHE_PATH,
+            )
             import os as _os
-            cache_path = _os.path.normpath(_UNIVERSE_CACHE_PATH)
-            if _os.path.exists(cache_path):
-                _os.remove(cache_path)
-            symbols = fetch_alpaca_universe(bot.trading_client, min_price=1.0)
-            return {"status": "ok", "count": len(symbols)}
+
+            # Delete equity cache
+            equity_path = _os.path.normpath(_UNIVERSE_CACHE_PATH)
+            if _os.path.exists(equity_path):
+                _os.remove(equity_path)
+
+            # Delete crypto cache
+            crypto_path = _os.path.normpath(_CRYPTO_UNIVERSE_CACHE_PATH)
+            if _os.path.exists(crypto_path):
+                _os.remove(crypto_path)
+
+            equity_symbols = fetch_alpaca_universe(bot.trading_client, min_price=1.0)
+            crypto_symbols = fetch_alpaca_crypto_universe(bot.trading_client)
+
+            return {
+                "status":        "ok",
+                "equity_count":  len(equity_symbols),
+                "crypto_count":  len(crypto_symbols),
+            }
         except Exception as e:
             logger.error(f"Universe refresh error: {e}")
             return JSONResponse({"error": str(e)}, status_code=500)
