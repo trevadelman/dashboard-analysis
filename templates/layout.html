@@ -22,11 +22,211 @@
             padding: var(--page-padding);
             width: 100%;
         }
+        /* Help modal prose */
+        .help-prose h3 { font-size: 0.85rem; font-weight: 700; margin: 1rem 0 0.4rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.55; }
+        .help-prose h4 { font-size: 0.8rem; font-weight: 600; margin: 0.75rem 0 0.25rem; }
+        .help-prose p  { font-size: 0.78rem; margin-bottom: 0.4rem; opacity: 0.8; }
+        .help-prose ul { font-size: 0.78rem; list-style: disc; padding-left: 1.2rem; margin-bottom: 0.5rem; opacity: 0.8; }
+        .help-prose li { margin-bottom: 0.2rem; }
+        .help-prose .kv { display: flex; gap: 0.5rem; font-size: 0.78rem; margin-bottom: 0.2rem; }
+        .help-prose .kv .k { font-weight: 600; min-width: 9rem; opacity: 0.7; }
     </style>
     {% block head %}{% endblock %}
 </head>
 <body>
     {% block body_prefix %}{% endblock %}
+
+    <!-- ── Help / Docs modal ──────────────────────────────────────────────── -->
+    <dialog id="help-modal" class="modal">
+        <div class="modal-box w-11/12 max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+            </form>
+            <h3 class="font-bold text-lg mb-4 flex items-center gap-2 shrink-0">
+                <i class="bi bi-book-fill text-primary"></i> App Guide
+            </h3>
+
+            <!-- Tabs -->
+            <div role="tablist" class="tabs tabs-bordered mb-4 shrink-0">
+                <a role="tab" class="tab tab-active text-xs" id="htab-overview"  onclick="switchHelpTab('overview')">Overview</a>
+                <a role="tab" class="tab text-xs"             id="htab-scanner"  onclick="switchHelpTab('scanner')">Scanner</a>
+                <a role="tab" class="tab text-xs"             id="htab-analysis" onclick="switchHelpTab('analysis')">Analysis</a>
+                <a role="tab" class="tab text-xs"             id="htab-bot"      onclick="switchHelpTab('bot')">Autonomous Bot</a>
+                <a role="tab" class="tab text-xs"             id="htab-positions" onclick="switchHelpTab('positions')">Positions</a>
+                <a role="tab" class="tab text-xs"             id="htab-backtest" onclick="switchHelpTab('backtest')">Backtest</a>
+            </div>
+
+            <!-- Scrollable content area -->
+            <div class="overflow-y-auto flex-1 pr-1">
+
+                <!-- ── Overview ──────────────────────────────────────────── -->
+                <div id="hpanel-overview" class="help-prose">
+                    <h3>What is this app?</h3>
+                    <p>A self-hosted trading dashboard that connects to your Alpaca brokerage account. It has two modes that work independently or together:</p>
+                    <ul>
+                        <li><strong>Manual mode</strong> — you use the Analysis Dashboard and Scanner to find setups, then place orders yourself from the Positions page.</li>
+                        <li><strong>Autonomous mode</strong> — the bot scans the market on a schedule, finds signals, and places bracket orders automatically.</li>
+                    </ul>
+
+                    <h3>Pages at a glance</h3>
+                    <div class="kv"><span class="k">Analysis Dashboard</span><span>Chart + indicators for a single symbol. Enter orders manually.</span></div>
+                    <div class="kv"><span class="k">Market Scanner</span><span>Batch scan a universe of symbols. Load cached results or run a fresh scan.</span></div>
+                    <div class="kv"><span class="k">Market Pulse</span><span>Broad market regime — SPY, QQQ, sector ETFs, breadth indicators.</span></div>
+                    <div class="kv"><span class="k">Positions</span><span>Live open positions, P&amp;L, and order management.</span></div>
+                    <div class="kv"><span class="k">Backtest</span><span>Run the momentum strategy against historical data for any symbol.</span></div>
+
+                    <h3>First-time setup</h3>
+                    <ul>
+                        <li>Open <strong>Settings → Alpaca</strong> and add your API key + secret. Use paper trading to start.</li>
+                        <li>Optionally configure an AI provider (Ollama or DeepSeek) in <strong>Settings → AI</strong> for AI-assisted signal scoring.</li>
+                        <li>Set your risk % and max positions in <strong>Settings → App</strong>.</li>
+                    </ul>
+                </div>
+
+                <!-- ── Scanner ────────────────────────────────────────────── -->
+                <div id="hpanel-scanner" class="help-prose hidden">
+                    <h3>How the scan works</h3>
+                    <p>Every symbol is evaluated in two tiers. A symbol must pass Tier 1 before Tier 2 is run.</p>
+                    <div class="kv"><span class="k">Tier 1 — Regime</span><span>Is the stock in a bullish or bearish trend? Uses EMA stack (9/21/50) and price structure. Bearish stocks are excluded from BUY signals.</span></div>
+                    <div class="kv"><span class="k">Tier 2 — Setup quality</span><span>Compression (Bollinger Band width percentile), Relative Strength vs SPY, and Relative Volume. All three must meet thresholds for a signal.</span></div>
+
+                    <h3>Universes</h3>
+                    <div class="kv"><span class="k">All Sectors (~500)</span><span>Static curated list of ~500 liquid GICS stocks. Always available, no cache needed.</span></div>
+                    <div class="kv"><span class="k">Full Universe</span><span>Cached Alpaca equity universe (~2,000+ symbols). Requires a "Refresh from Alpaca" first. Equity only — no crypto.</span></div>
+                    <div class="kv"><span class="k">All Crypto (Alpaca)</span><span>All USD-quoted crypto pairs tradeable on Alpaca (~25 pairs).</span></div>
+                    <div class="kv"><span class="k">Custom List</span><span>Comma-separated symbols you type in. Useful for watchlists.</span></div>
+
+                    <h3>Result columns</h3>
+                    <div class="kv"><span class="k">Regime</span><span>BULLISH / BEARISH / NEUTRAL based on EMA stack.</span></div>
+                    <div class="kv"><span class="k">Tier</span><span>How far the symbol got (1 = regime only, 2 = full setup scored).</span></div>
+                    <div class="kv"><span class="k">Signal</span><span>BUY, SELL, or NONE. Only Tier 2 symbols get a signal.</span></div>
+                    <div class="kv"><span class="k">Score / Grade</span><span>0–100 composite score. A = 80+, B = 65+, C = 50+, D = below 50.</span></div>
+                    <div class="kv"><span class="k">Rel Strength</span><span>Price return vs SPY over the lookback period. Positive = outperforming.</span></div>
+                    <div class="kv"><span class="k">RVOL</span><span>Relative volume — today's volume vs the 20-day average. &gt;1.5 = elevated.</span></div>
+                    <div class="kv"><span class="k">BB Width %</span><span>Bollinger Band width as a % of price. Low = compressed = potential breakout.</span></div>
+
+                    <h3>Cache</h3>
+                    <p>Every completed scan is saved to a local cache. The autonomous bot also writes to this cache on its scheduled runs. Click <strong>Load Cache</strong> to view the latest results without re-scanning.</p>
+
+                    <h3>Text filter</h3>
+                    <p>Type in the filter box to instantly narrow results. Matches against symbol, regime, signal, and grade. Examples: <code>BUY</code>, <code>BULLISH</code>, <code>NVDA</code>, <code>A</code>.</p>
+                </div>
+
+                <!-- ── Analysis Dashboard ─────────────────────────────────── -->
+                <div id="hpanel-analysis" class="help-prose hidden">
+                    <h3>Symbol lookup</h3>
+                    <p>Type any ticker in the search box. The dashboard fetches OHLCV bars and runs the full indicator suite. Crypto symbols use slash format (e.g. <code>BTC/USD</code>).</p>
+
+                    <h3>Timeframes</h3>
+                    <div class="kv"><span class="k">Long (Daily)</span><span>1 year of daily bars. Best for swing-to-position trades held days to weeks.</span></div>
+                    <div class="kv"><span class="k">Swing (Hourly)</span><span>3 months of hourly bars. Best for multi-day swing trades.</span></div>
+                    <div class="kv"><span class="k">Short (15-min)</span><span>1 month of 15-minute bars. Best for intraday and short-term trades.</span></div>
+
+                    <h3>Indicator panels</h3>
+                    <div class="kv"><span class="k">Price + EMAs</span><span>Candlestick chart with 9/21/50 EMA overlays. EMA stack alignment = trend direction.</span></div>
+                    <div class="kv"><span class="k">RSI</span><span>14-period RSI. Above 55 = bullish momentum, below 45 = bearish.</span></div>
+                    <div class="kv"><span class="k">MACD</span><span>12/26/9 MACD. Histogram color shows momentum direction.</span></div>
+                    <div class="kv"><span class="k">Bollinger Bands</span><span>20-period BB. Narrow bands = compression = potential breakout setup.</span></div>
+                    <div class="kv"><span class="k">Volume</span><span>Bar volume with 20-day average overlay. Spikes confirm moves.</span></div>
+
+                    <h3>Signal output</h3>
+                    <p>The signal card shows the Tier 1 + Tier 2 verdict, score, grade, suggested entry/stop/target, and risk-reward ratio. If AI is configured, an AI confidence score is also shown.</p>
+
+                    <h3>Placing orders</h3>
+                    <p>Use the Order panel to submit market or limit orders directly to Alpaca. Position size is calculated automatically based on your risk % setting and the suggested stop distance.</p>
+                </div>
+
+                <!-- ── Autonomous Bot ─────────────────────────────────────── -->
+                <div id="hpanel-bot" class="help-prose hidden">
+                    <h3>Decision flow</h3>
+                    <p>The bot runs on a fixed schedule. Every job follows this sequence:</p>
+                    <ul>
+                        <li><strong>Circuit breakers</strong> — if manually halted or daily loss limit breached, stop immediately.</li>
+                        <li><strong>Exit detection</strong> — compare current positions to last known; log any that disappeared (stop/target hit).</li>
+                        <li><strong>Position review</strong> — for each open position, run the reviewer and trail the stop or force-exit if warranted.</li>
+                        <li><strong>Entry scan</strong> — scan the watchlist; submit bracket orders for new signals that pass all gates.</li>
+                    </ul>
+
+                    <h3>Schedule (equity watchlists)</h3>
+                    <div class="kv"><span class="k">9:30 ET Mon–Fri</span><span>Snapshot opening equity, reset daily halt.</span></div>
+                    <div class="kv"><span class="k">9:35 ET Mon–Fri</span><span>Review long (daily) positions.</span></div>
+                    <div class="kv"><span class="k">9:40 ET Mon–Fri</span><span>Scan for long signals.</span></div>
+                    <div class="kv"><span class="k">Every 15 min</span><span>Scan for short (15-min) signals.</span></div>
+                    <div class="kv"><span class="k">Every 60 min</span><span>Scan for swing signals + review swing positions.</span></div>
+                    <div class="kv"><span class="k">Every 5 min</span><span>Exit detection poller.</span></div>
+
+                    <h3>Schedule (crypto watchlists)</h3>
+                    <p>Same interval jobs, but the three daily jobs fire at midnight ET (7 days/week) instead of 9:30 ET Mon–Fri. Crypto positions are reviewed 24/7.</p>
+
+                    <h3>Settings</h3>
+                    <div class="kv"><span class="k">Enable autonomous</span><span>Master switch. Off = bot scans but never places orders.</span></div>
+                    <div class="kv"><span class="k">Scan Watchlist</span><span>Universe the bot scans. All Sectors = ~500 stocks. Full Universe = full cached Alpaca equity list.</span></div>
+                    <div class="kv"><span class="k">Max Daily Loss %</span><span>If account equity drops this % from the opening snapshot, the bot halts for the rest of the day.</span></div>
+                    <div class="kv"><span class="k">Entry Cooldown</span><span>Minimum hours between bot entries on the same symbol. Prevents re-entering a position too soon.</span></div>
+                    <div class="kv"><span class="k">Review Timeframes</span><span>Which timeframes the position reviewer runs on. Match to the timeframes you trade.</span></div>
+
+                    <h3>Orders</h3>
+                    <p>The bot always submits <strong>bracket orders</strong> — a limit entry with a stop loss and take profit baked in. If the bot goes offline, your stops remain active on Alpaca's servers.</p>
+
+                    <h3>Circuit breaker</h3>
+                    <p>Triggered automatically when the daily loss limit is breached, or manually via the Pause button on the dashboard. Resets at the next market open (or midnight for crypto).</p>
+                </div>
+
+                <!-- ── Positions ──────────────────────────────────────────── -->
+                <div id="hpanel-positions" class="help-prose hidden">
+                    <h3>Open positions</h3>
+                    <p>Shows all currently open positions from your Alpaca account. Refreshes automatically every 30 seconds.</p>
+                    <div class="kv"><span class="k">Unrealized P&amp;L</span><span>Current mark-to-market gain/loss on the position.</span></div>
+                    <div class="kv"><span class="k">Cost Basis</span><span>Average entry price × quantity.</span></div>
+                    <div class="kv"><span class="k">Market Value</span><span>Current price × quantity.</span></div>
+
+                    <h3>Closing positions</h3>
+                    <p>Use the Close button to submit a market order to close the full position immediately. For partial closes, use the Analysis Dashboard order panel.</p>
+
+                    <h3>Orders</h3>
+                    <p>The Orders tab shows all open and recently filled orders. Bracket order legs (stop loss, take profit) appear as child orders under the parent entry order.</p>
+                </div>
+
+                <!-- ── Backtest ───────────────────────────────────────────── -->
+                <div id="hpanel-backtest" class="help-prose hidden">
+                    <h3>What it tests</h3>
+                    <p>Runs the same momentum strategy (Tier 1 + Tier 2) against historical OHLCV data for a single symbol. Simulates entries and exits using the same signal logic the live bot uses.</p>
+
+                    <h3>Parameters</h3>
+                    <div class="kv"><span class="k">Symbol</span><span>Any equity or crypto symbol.</span></div>
+                    <div class="kv"><span class="k">Timeframe</span><span>Long (daily), Swing (hourly), or Short (15-min).</span></div>
+                    <div class="kv"><span class="k">Start / End date</span><span>Historical range to test over.</span></div>
+                    <div class="kv"><span class="k">Initial capital</span><span>Starting account size for the simulation.</span></div>
+                    <div class="kv"><span class="k">Risk %</span><span>% of equity risked per trade (same as the live bot setting).</span></div>
+
+                    <h3>Results</h3>
+                    <div class="kv"><span class="k">Total return</span><span>Net % gain/loss over the test period.</span></div>
+                    <div class="kv"><span class="k">Win rate</span><span>% of trades that were profitable.</span></div>
+                    <div class="kv"><span class="k">Avg R</span><span>Average return in units of initial risk (R). &gt;1.0 = positive expectancy.</span></div>
+                    <div class="kv"><span class="k">Max drawdown</span><span>Largest peak-to-trough equity decline during the test.</span></div>
+                    <div class="kv"><span class="k">Sharpe ratio</span><span>Risk-adjusted return. &gt;1.0 is generally considered acceptable.</span></div>
+
+                    <h3>Limitations</h3>
+                    <ul>
+                        <li>No slippage or commission modelling — live results will differ.</li>
+                        <li>Signals are generated bar-by-bar with no lookahead, but fills assume the next bar's open price.</li>
+                        <li>Only tests one symbol at a time — portfolio-level backtesting is not supported.</li>
+                    </ul>
+                </div>
+
+            </div><!-- end scrollable -->
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <script>
+    function switchHelpTab(tab) {
+        ['overview','scanner','analysis','bot','positions','backtest'].forEach(t => {
+            document.getElementById(`hpanel-${t}`).classList.toggle('hidden', t !== tab);
+            document.getElementById(`htab-${t}`).classList.toggle('tab-active', t === tab);
+        });
+    }
+    </script>
 
     <!-- Settings modal -->
     <dialog id="settings-modal" class="modal">
@@ -184,17 +384,9 @@
                             <div class="form-control">
                                 <label class="label py-1"><span class="label-text text-xs font-medium">Scan Watchlist</span></label>
                                 <select id="setting-bot-watchlist" class="select select-bordered select-sm">
-                                    <optgroup label="Curated Lists">
-                                        <option value="sp500_top100">S&amp;P 500 Top 100</option>
-                                        <option value="nasdaq100_top50">Nasdaq 100 Top 50</option>
-                                        <option value="sector_etfs">Sector ETFs</option>
-                                        <option value="all_sectors">All Sectors (~500)</option>
-                                        <option value="all_universe">Full Universe (cached Alpaca)</option>
-                                    </optgroup>
-                                    <optgroup label="Crypto">
-                                        <option value="crypto_top10">Crypto Top 10</option>
-                                        <option value="crypto_all">Crypto All (Alpaca)</option>
-                                    </optgroup>
+                                    <option value="all_sectors">All Sectors (~500)</option>
+                                    <option value="all_universe">Full Universe (cached Alpaca)</option>
+                                    <option value="crypto_all">All Crypto (Alpaca)</option>
                                 </select>
                             </div>
                             <div class="form-control">
@@ -279,6 +471,9 @@
                 </div>
                 <div class="flex-none gap-2">
                     {% block navbar_right %}
+                    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('help-modal').showModal()" title="Help">
+                        <i class="bi bi-info-circle text-lg"></i>
+                    </button>
                     <button class="btn btn-ghost btn-sm" onclick="document.getElementById('settings-modal').showModal(); loadSettings();" title="Settings">
                         <i class="bi bi-gear-fill text-lg"></i>
                     </button>
