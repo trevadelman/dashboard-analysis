@@ -11,15 +11,16 @@ import json
 import logging
 import os
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Generator
 
 import pandas as pd
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
-from alpaca.data.timeframe import TimeFrame
-from alpaca.data.enums import DataFeed
 from analysis.indicators import TechnicalIndicators
+from data.bar_fetcher import (
+    fetch_equity_bars_batch, fetch_crypto_bars_batch,
+    EQUITY_BATCH_SIZE, CRYPTO_BATCH_SIZE,
+)
 from analysis.asset_type import AssetType, classify_symbol
 from screeners.symbol_lists import (
     SP500_TOP100,
@@ -136,7 +137,7 @@ class MarketScanner:
         # Process symbols in batches.
         # Crypto uses a smaller batch size to avoid hitting Alpaca's per-response
         # row limit, which silently truncates symbols at the end of large batches.
-        batch_size = _CRYPTO_BATCH_SIZE if is_crypto_scan else _BATCH_SIZE
+        batch_size = CRYPTO_BATCH_SIZE if is_crypto_scan else EQUITY_BATCH_SIZE
         for batch_start in range(0, total, batch_size):
             batch = symbols[batch_start : batch_start + batch_size]
 
@@ -247,61 +248,11 @@ class MarketScanner:
         return list(SYMBOL_LISTS.get(list_name, []))
 
     def _fetch_bars_batch(self, symbols: list, timeframe: str = "long") -> dict:
-        """
-        Fetch bars for a batch of symbols in a single Alpaca request.
-
-        Returns a dict mapping symbol → DataFrame (empty DataFrame if no data).
-        Bar interval and lookback days are resolved from TIMEFRAME_CONFIG.
-        """
-        from datetime import timezone
-        from alpaca.data.timeframe import TimeFrameUnit
-
+        """Fetch equity bars for a batch of symbols via bar_fetcher."""
         cfg      = TIMEFRAME_CONFIG.get(timeframe, TIMEFRAME_CONFIG["long"])
         interval = cfg["interval"]
-        days     = cfg["days"]
-        tf_obj   = {
-            "1d":  TimeFrame.Day,
-            "1h":  TimeFrame.Hour,
-            "15m": TimeFrame(15, TimeFrameUnit.Minute),
-        }.get(interval, TimeFrame.Day)
-
-        result = {sym: pd.DataFrame() for sym in symbols}
-
-        try:
-            end   = datetime.now(timezone.utc)
-            start = end - timedelta(days=days)
-            request = StockBarsRequest(
-                symbol_or_symbols=symbols,
-                timeframe=tf_obj,
-                start=start,
-                end=end,
-                limit=10000,
-                feed=DataFeed.IEX,
-            )
-            bars_df = self._data_client.get_stock_bars(request).df
-            if bars_df.empty:
-                return result
-
-            # alpaca-py returns a MultiIndex (symbol, timestamp) for multi-symbol requests
-            if isinstance(bars_df.index, pd.MultiIndex):
-                bars_df.columns = [c.lower() for c in bars_df.columns]
-                for sym in symbols:
-                    try:
-                        sym_bars = bars_df.xs(sym, level=0)
-                        if not sym_bars.empty:
-                            result[sym] = sym_bars
-                    except KeyError:
-                        pass  # symbol had no data in this batch
-            else:
-                # Single symbol — shouldn't happen in batch mode but handle gracefully
-                bars_df.columns = [c.lower() for c in bars_df.columns]
-                if symbols:
-                    result[symbols[0]] = bars_df
-
-        except Exception as e:
-            logger.debug(f"Batch fetch error for {len(symbols)} symbols: {e}")
-
-        return result
+        period   = f"{cfg['days']}d"
+        return fetch_equity_bars_batch(self._data_client, symbols, period, interval)
 
     def _scan_one_from_bars(self, symbol: str, bars: pd.DataFrame, timeframe: str = "long") -> dict | None:
         """
@@ -504,62 +455,14 @@ class MarketScanner:
         return total, grade
 
     def _fetch_crypto_bars_batch(self, symbols: list, timeframe: str = "long") -> dict:
-        """
-        Fetch bars for a batch of crypto symbols using CryptoHistoricalDataClient.
-
-        Returns a dict mapping symbol → DataFrame (empty DataFrame if no data).
-        Bar interval and lookback days are resolved from TIMEFRAME_CONFIG.
-        """
-        from datetime import timezone
-        from alpaca.data.timeframe import TimeFrameUnit
-
-        result = {sym: pd.DataFrame() for sym in symbols}
-
+        """Fetch crypto bars for a batch of symbols via bar_fetcher."""
         if not self._crypto_client:
             logger.debug("No crypto client available — skipping crypto batch fetch")
-            return result
-
+            return {sym: pd.DataFrame() for sym in symbols}
         cfg      = TIMEFRAME_CONFIG.get(timeframe, TIMEFRAME_CONFIG["long"])
         interval = cfg["interval"]
-        days     = cfg["days"]
-        tf_obj   = {
-            "1d":  TimeFrame.Day,
-            "1h":  TimeFrame.Hour,
-            "15m": TimeFrame(15, TimeFrameUnit.Minute),
-        }.get(interval, TimeFrame.Day)
-
-        try:
-            end   = datetime.now(timezone.utc)
-            start = end - timedelta(days=days)
-            request = CryptoBarsRequest(
-                symbol_or_symbols=symbols,
-                timeframe=tf_obj,
-                start=start,
-                end=end,
-                limit=10000,
-            )
-            bars_df = self._crypto_client.get_crypto_bars(request).df
-            if bars_df.empty:
-                return result
-
-            if isinstance(bars_df.index, pd.MultiIndex):
-                bars_df.columns = [c.lower() for c in bars_df.columns]
-                for sym in symbols:
-                    try:
-                        sym_bars = bars_df.xs(sym, level=0)
-                        if not sym_bars.empty:
-                            result[sym] = sym_bars
-                    except KeyError:
-                        pass
-            else:
-                bars_df.columns = [c.lower() for c in bars_df.columns]
-                if symbols:
-                    result[symbols[0]] = bars_df
-
-        except Exception as e:
-            logger.debug(f"Crypto batch fetch error for {len(symbols)} symbols: {e}")
-
-        return result
+        period   = f"{cfg['days']}d"
+        return fetch_crypto_bars_batch(self._crypto_client, symbols, period, interval)
 
     @staticmethod
     def _event(payload: dict) -> str:

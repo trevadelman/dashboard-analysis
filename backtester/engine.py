@@ -114,51 +114,28 @@ class BacktestEngine:
 
     def _fetch_bars(self, symbol: str, period: str, timeframe: str) -> pd.DataFrame | None:
         """
-        Fetch OHLCV bars via the Alpaca data client.
+        Fetch OHLCV bars via bar_fetcher (single choke point for all Alpaca fetches).
         Returns a DataFrame indexed by timestamp, sorted ascending.
 
         Bar interval is resolved from TIMEFRAME_CONFIG (single source of truth).
         """
-        from alpaca.data.requests import StockBarsRequest
-        from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
-        from alpaca.data.enums import DataFeed
+        from data.bar_fetcher import fetch_equity_bars, build_timeframe_from_key
 
-        # Resolve Alpaca TimeFrame from TIMEFRAME_CONFIG — never hardcode here
-        alpaca_tf_map = {
-            'Day':      TimeFrame.Day,
-            'Hour':     TimeFrame.Hour,
-            'Minute15': TimeFrame(15, TimeFrameUnit.Minute),
-        }
         tf_key = TIMEFRAME_CONFIG.get(timeframe, TIMEFRAME_CONFIG['long'])['alpaca_tf']
-        tf     = alpaca_tf_map.get(tf_key, TimeFrame.Day)
+        interval_map = {'Day': '1d', 'Hour': '1h', 'Minute15': '15m'}
+        interval = interval_map.get(tf_key, '1d')
 
         days = _PERIOD_DAYS.get(period, 365)
         # Add extra warm-up buffer so indicators are valid at the start of the test window
-        total_days = days + _WARMUP_BARS * 2
-        end   = datetime.now(timezone.utc)
-        start = end - timedelta(days=total_days)
+        extra_days = _WARMUP_BARS * 2
 
-        try:
-            req  = StockBarsRequest(symbol_or_symbols=symbol, timeframe=tf,
-                                    start=start, end=end, feed=DataFeed.IEX)
-            resp = self.data_client.get_stock_bars(req)
-            df   = resp.df
-
-            if df is None or df.empty:
-                logger.warning(f'BacktestEngine: no data for {symbol}')
-                return None
-
-            # Alpaca returns a MultiIndex (symbol, timestamp) — drop the symbol level
-            if isinstance(df.index, pd.MultiIndex):
-                df = df.xs(symbol, level='symbol')
-
-            df = df.sort_index()
-            df.index.name = 'timestamp'
-            return df
-
-        except Exception as e:
-            logger.error(f'BacktestEngine: fetch error for {symbol}: {e}')
+        df = fetch_equity_bars(self.data_client, symbol, period, interval, extra_days=extra_days)
+        if df is None or df.empty:
+            logger.warning(f'BacktestEngine: no data for {symbol}')
             return None
+
+        df.index.name = 'timestamp'
+        return df.sort_index()
 
     def _fetch_spy(self, period: str, timeframe: str) -> pd.DataFrame | None:
         """

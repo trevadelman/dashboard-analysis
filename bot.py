@@ -5,11 +5,8 @@ Automated trading with Alpaca API, technical analysis, and AI strategy generatio
 
 from alpaca.trading.client import TradingClient
 from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
-from alpaca.data.requests import StockBarsRequest, CryptoBarsRequest
-from alpaca.data.timeframe import TimeFrame, TimeFrameUnit
 from alpaca.trading.requests import MarketOrderRequest, GetOrdersRequest
 from alpaca.trading.enums import OrderSide, TimeInForce, OrderClass, QueryOrderStatus
-from alpaca.data.enums import DataFeed
 import pandas as pd
 import json
 from datetime import datetime, timedelta
@@ -20,6 +17,10 @@ from analysis.indicators import TechnicalIndicators
 from analysis.asset_type import AssetType, classify_symbol
 from ai_strategy import AIStrategyGenerator
 from strategies.momentum import SignalHierarchy, TIMEFRAME_CONFIG
+from data.bar_fetcher import (
+    fetch_equity_bars, fetch_crypto_bars,
+    build_timeframe, build_date_range,
+)
 from config import Config
 
 logger = logging.getLogger(__name__)
@@ -104,70 +105,15 @@ class TradingBot:
             logger.error(f"Error getting market data for {symbol}: {e}")
             return pd.DataFrame()
 
-    def _build_timeframe(self, interval: str):
-        """Map interval string to Alpaca TimeFrame object."""
-        tf_map = {
-            '1d':  TimeFrame.Day,
-            '1h':  TimeFrame.Hour,
-            '15m': TimeFrame(15, TimeFrameUnit.Minute),
-            '5m':  TimeFrame(5, TimeFrameUnit.Minute),
-            '1m':  TimeFrame.Minute,
-        }
-        return tf_map.get(interval, TimeFrame.Day)
-
-    def _build_date_range(self, period: str):
-        """Return (start, end) timezone-aware datetime pair for the given period string."""
-        from datetime import timezone
-        period_days = {
-            '1mo': 30, '2w': 14, '3mo': 90, '6mo': 180, '1y': 365, '2y': 730, '5d': 5,
-        }
-        end   = datetime.now(timezone.utc)
-        start = end - timedelta(days=period_days.get(period, 365))
-        return start, end
-
-    def _normalize_bars(self, bars) -> pd.DataFrame:
-        """Drop MultiIndex symbol level and lowercase column names."""
-        if isinstance(bars.index, pd.MultiIndex):
-            bars = bars.droplevel(0)
-        bars.columns = [c.lower() for c in bars.columns]
-        return bars
-
     def _get_equity_data(self, symbol: str, period: str, interval: str) -> pd.DataFrame:
-        """Fetch equity bars from Alpaca and calculate indicators with SPY benchmark."""
-        tf    = self._build_timeframe(interval)
-        start, end = self._build_date_range(period)
-
-        request = StockBarsRequest(
-            symbol_or_symbols=symbol,
-            timeframe=tf,
-            start=start,
-            end=end,
-            limit=10000,
-            feed=DataFeed.IEX,
-        )
-        bars = self.data_client.get_stock_bars(request).df
+        """Fetch equity bars via bar_fetcher and calculate indicators with SPY benchmark."""
+        bars = fetch_equity_bars(self.data_client, symbol, period, interval)
         if bars.empty:
-            logger.warning(f"No equity data returned for {symbol}")
             return pd.DataFrame()
-        bars = self._normalize_bars(bars)
 
-        # Fetch SPY as the RS benchmark
         benchmark_data = pd.DataFrame()
         if symbol.upper() != 'SPY':
-            try:
-                spy_req = StockBarsRequest(
-                    symbol_or_symbols='SPY',
-                    timeframe=tf,
-                    start=start,
-                    end=end,
-                    limit=10000,
-                    feed=DataFeed.IEX,
-                )
-                spy_bars = self.data_client.get_stock_bars(spy_req).df
-                if not spy_bars.empty:
-                    benchmark_data = self._normalize_bars(spy_bars)
-            except Exception:
-                pass  # RS vs SPY will be NaN — non-fatal
+            benchmark_data = fetch_equity_bars(self.data_client, 'SPY', period, interval)
 
         bars = TechnicalIndicators.calculate_all(bars, benchmark_data=benchmark_data)
         logger.info(f"Retrieved {len(bars)} equity bars for {symbol}")
@@ -175,44 +121,17 @@ class TradingBot:
 
     def _get_crypto_data(self, symbol: str, period: str, interval: str) -> pd.DataFrame:
         """
-        Fetch crypto bars from Alpaca CryptoHistoricalDataClient.
+        Fetch crypto bars via bar_fetcher and calculate indicators with BTC benchmark.
 
-        RS benchmark:
-          - BTC/USD: no RS gate (it IS the benchmark) — benchmark_data is empty
-          - All other crypto: RS vs BTC/USD
+        BTC/USD is its own benchmark — no RS gate applied.
         """
-        tf    = self._build_timeframe(interval)
-        start, end = self._build_date_range(period)
-
-        request = CryptoBarsRequest(
-            symbol_or_symbols=symbol,
-            timeframe=tf,
-            start=start,
-            end=end,
-            limit=10000,
-        )
-        bars = self.crypto_client.get_crypto_bars(request).df
+        bars = fetch_crypto_bars(self.crypto_client, symbol, period, interval)
         if bars.empty:
-            logger.warning(f"No crypto data returned for {symbol}")
             return pd.DataFrame()
-        bars = self._normalize_bars(bars)
 
-        # Fetch BTC/USD as the RS benchmark for altcoins
         benchmark_data = pd.DataFrame()
         if symbol.upper() != 'BTC/USD':
-            try:
-                btc_req = CryptoBarsRequest(
-                    symbol_or_symbols='BTC/USD',
-                    timeframe=tf,
-                    start=start,
-                    end=end,
-                    limit=10000,
-                )
-                btc_bars = self.crypto_client.get_crypto_bars(btc_req).df
-                if not btc_bars.empty:
-                    benchmark_data = self._normalize_bars(btc_bars)
-            except Exception:
-                pass  # RS vs BTC will be NaN — non-fatal
+            benchmark_data = fetch_crypto_bars(self.crypto_client, 'BTC/USD', period, interval)
 
         bars = TechnicalIndicators.calculate_all(bars, benchmark_data=benchmark_data)
         logger.info(f"Retrieved {len(bars)} crypto bars for {symbol}")
