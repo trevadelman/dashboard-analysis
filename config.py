@@ -49,6 +49,16 @@ class Config:
         self.MAX_POSITIONS   = int(get_setting("max_positions") or "5")
         self.RISK_PERCENTAGE = float(get_setting("risk_percentage") or "2.0")
 
+        # ── Autonomous bot ────────────────────────────────────────────────────
+        self.BOT_AUTONOMOUS          = os.getenv("BOT_AUTONOMOUS", "false").lower() == "true"
+        self.BOT_SCAN_WATCHLIST      = os.getenv("BOT_SCAN_WATCHLIST", "sp500_top100")
+        self.BOT_MAX_DAILY_LOSS_PCT  = float(os.getenv("BOT_MAX_DAILY_LOSS_PCT", "2.0"))
+        self.BOT_ENTRY_COOLDOWN_HOURS = int(os.getenv("BOT_ENTRY_COOLDOWN_HOURS", "24"))
+        self.BOT_REVIEW_TIMEFRAMES   = [
+            t.strip() for t in os.getenv("BOT_REVIEW_TIMEFRAMES", "swing,long").split(",")
+            if t.strip()
+        ]
+
         # ── Strategy parameters (hardcoded defaults — tuned per timeframe) ────
         # These are not user-facing settings; they live in strategies/momentum.py
         # TIMEFRAME_DEFAULTS.  The dict below is kept for the /api/config endpoint.

@@ -17,6 +17,8 @@ data/*.json
 data/*.csv
 data/*.db
 data/*.key
+data/bot_state.json
+data/bot_actions.json
 
 # IDE
 .vscode/

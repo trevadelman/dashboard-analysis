@@ -20,6 +20,41 @@
     <!-- Position accordion cards -->
     <div id="positions-container" class="space-y-3"></div>
 
+    <!-- Bot Status & Action Log -->
+    <div class="mt-10">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-bold flex items-center gap-2">
+                <i class="bi bi-robot text-primary"></i>
+                Autonomous Bot
+            </h2>
+            <div class="flex items-center gap-2">
+                <button id="bot-pause-btn" class="btn btn-xs btn-ghost gap-1" onclick="toggleBotHalt()">
+                    <i class="bi bi-pause-circle"></i> <span id="bot-pause-label">Pause</span>
+                </button>
+                <button class="btn btn-xs btn-ghost gap-1" onclick="loadBotStatus()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+        </div>
+        <div id="bot-status-container">
+            <div class="flex justify-center py-6">
+                <span class="loading loading-spinner loading-md text-primary"></span>
+            </div>
+        </div>
+
+        <!-- Action Log -->
+        <div class="mt-6">
+            <h3 class="text-sm font-semibold text-base-content/70 mb-3 flex items-center gap-2">
+                <i class="bi bi-list-ul"></i> Recent Bot Actions
+            </h3>
+            <div id="bot-actions-container">
+                <div class="flex justify-center py-4">
+                    <span class="loading loading-spinner loading-sm text-primary"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Trade History -->
     <div class="mt-10">
         <div class="flex items-center justify-between mb-4">

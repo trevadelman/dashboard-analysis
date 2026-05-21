@@ -1337,6 +1337,75 @@ Rules: Use markdown headers. Be direct. Use actual numbers from the data. No dis
         except Exception as e:
             return JSONResponse({"status": "error", "message": str(e)}, status_code=200)
 
+    # ── Autonomous bot status & control ───────────────────────────────────────
+
+    @app.get("/api/bot/status")
+    async def bot_status(request: Request, _=Depends(login_required)):
+        """
+        Return the current state of the autonomous scheduler.
+
+        Response:
+          {
+            "running": bool,
+            "halted": bool,
+            "autonomous": bool,
+            "daily_open_equity": float | null,
+            "jobs": [{ "id", "name", "next_run" }, ...],
+            "today_actions": int,
+            "last_actions": [...]
+          }
+        """
+        try:
+            import scheduler as _sched
+            status = _sched.get_status()
+            status["autonomous"] = bot.config.BOT_AUTONOMOUS
+            return status
+        except Exception as e:
+            logger.error(f"Bot status error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/api/bot/pause")
+    async def bot_pause(request: Request, _=Depends(login_required)):
+        """
+        Pause or resume the autonomous bot without restarting the app.
+
+        Body: { "halted": true | false }
+
+        Sets bot_state.halted which is checked by all circuit breaker gates.
+        """
+        try:
+            from strategies.auto_manager import _load_state, _save_state, _log_action
+            data   = await request.json()
+            halted = bool(data.get("halted", True))
+            state  = _load_state()
+            state["halted"] = halted
+            _save_state(state)
+            action = "MANUAL_HALT" if halted else "MANUAL_RESUME"
+            _log_action(action, None, {}, "Bot halted by user" if halted else "Bot resumed by user")
+            return {"status": "ok", "halted": halted}
+        except Exception as e:
+            logger.error(f"Bot pause error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.get("/api/bot/actions")
+    async def bot_actions(
+        request: Request,
+        limit: int = 50,
+        _=Depends(login_required),
+    ):
+        """Return the last N entries from bot_actions.json."""
+        import json as _json
+        actions_path = os.path.join("data", "bot_actions.json")
+        try:
+            with open(actions_path) as f:
+                actions = _json.load(f)
+            return list(reversed(actions[-limit:]))
+        except FileNotFoundError:
+            return []
+        except Exception as e:
+            logger.error(f"Bot actions error: {e}")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     return app
 
 
@@ -1389,7 +1458,20 @@ def create_app() -> FastAPI:
         except Exception as e:
             logger.warning(f"Could not restore active profile on startup: {e}")
 
-    return create_dashboard(bot)
+    dashboard = create_dashboard(bot)
+
+    # ── Start autonomous scheduler ────────────────────────────────────────────
+    # The scheduler runs in a background thread and never blocks requests.
+    # It starts regardless of BOT_AUTONOMOUS — the entry scan jobs check the
+    # flag themselves, so position review and exit detection always run.
+    try:
+        import scheduler as _scheduler_mod
+        _scheduler_mod.start(bot, config)
+        logger.info("Autonomous scheduler started")
+    except Exception as e:
+        logger.warning(f"Scheduler could not start: {e}")
+
+    return dashboard
 
 
 app = create_app()
