@@ -243,6 +243,9 @@
                     <h3>Circuit breaker</h3>
                     <p>Triggered automatically when the daily loss limit is breached, or manually via the <strong>Pause</strong> button on the Positions page. Resets at the next market open (or midnight for crypto).</p>
 
+                    <h3>Per-position blacklist</h3>
+                    <p>Each position card has a <strong>Bot Managed</strong> toggle immediately to the right of the "Position Review" heading. When toggled off, the bot skips that symbol entirely — it will not trail the stop, force an exit, or enter a new position on that symbol. The blacklist persists across server restarts. Use this when you want to manage a position manually without interference from the bot's automated review loop.</p>
+
                     <h3>Monitoring</h3>
                     <p>All bot activity is visible on the <strong>Positions</strong> page — the Autonomous Bot section shows running/halted status, scheduled job next-run times, and the last 20 actions with timestamps.</p>
                 </div>
@@ -271,6 +274,9 @@
 
                     <h3>Adjust orders</h3>
                     <p>Pre-filled inputs for stop and target prices (populated with suggested values from the review). Click <strong>Apply Adjustment</strong> to modify the live bracket order on Alpaca. Click <strong>Close Position</strong> to submit a market close order (with inline confirmation).</p>
+
+                    <h3>Bot Managed toggle</h3>
+                    <p>Each position card has a <strong>Bot Managed</strong> toggle immediately to the right of the "Position Review" heading. When toggled on (blue), the autonomous bot will trail stops, force exits, and consider new entries on that symbol as normal. When toggled off, the bot skips that symbol entirely — useful when you want to manage a position manually without the bot interfering. The state persists across server restarts. A robot icon in the collapsed card header also reflects the current state (red outline = blacklisted).</p>
 
                     <h3>Autonomous Bot section</h3>
                     <p>Shows the bot's running/halted/auto-entry status, today's action count, daily open equity snapshot, and a table of scheduled jobs with their next run times. Use the <strong>Pause / Resume</strong> button to manually halt or resume the bot.</p>
