@@ -12,6 +12,7 @@ Equity watchlist jobs
   exit_poller           — every 5 min: detect closed positions
   swing_review          — every 60 min: review swing positions
   swing_scan            — every 60 min: scan for swing signals
+  short_review          — every 15 min: review short (15-min) positions
   short_scan            — every 15 min: scan for short signals
 
 Crypto watchlist jobs (24/7 — no market-hours gates)
@@ -22,6 +23,7 @@ Crypto watchlist jobs (24/7 — no market-hours gates)
   exit_poller           — every 5 min: detect closed positions (unchanged)
   swing_review          — every 60 min: review swing positions (unchanged)
   swing_scan            — every 60 min: scan for swing signals (unchanged)
+  short_review          — every 15 min: review short (15-min) positions (unchanged)
   short_scan            — every 15 min: scan for short signals (unchanged)
 """
 
@@ -102,6 +104,15 @@ def _job_swing_scan(bot, config) -> None:
         run_entry_scan(bot, config, state, timeframe="swing")
     except Exception as e:
         logger.error(f"[scheduler] swing_scan failed: {e}")
+
+
+def _job_short_review(bot, config) -> None:
+    try:
+        from strategies.auto_manager import _load_state, run_position_review
+        state = _load_state()
+        run_position_review(bot, config, state, timeframe="short")
+    except Exception as e:
+        logger.error(f"[scheduler] short_review failed: {e}")
 
 
 def _job_short_scan(bot, config) -> None:
@@ -226,6 +237,17 @@ def start(bot, config) -> BackgroundScheduler:
         name="Swing timeframe entry scan",
         replace_existing=True,
         misfire_grace_time=300,
+    )
+
+    # Every 15 min — short position review
+    _scheduler.add_job(
+        _job_short_review,
+        IntervalTrigger(minutes=15),
+        args=[bot, config],
+        id="short_review",
+        name="Short position review",
+        replace_existing=True,
+        misfire_grace_time=60,
     )
 
     # Every 15 min — short entry scan

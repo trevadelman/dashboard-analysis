@@ -348,34 +348,55 @@ class PositionReviewer:
 
     def _check_rsi_divergence(self, bars: pd.DataFrame, side: str) -> bool:
         """
-        Detect bearish RSI divergence (for longs): price making higher highs
-        but RSI making lower highs over the last 10 bars.
+        Detect bearish RSI divergence (for longs): price making a higher swing
+        high but RSI making a lower swing high over the last 20 bars.
+
+        Uses local swing highs/lows (bars where the value is higher/lower than
+        both its immediate neighbours) rather than half-window maxima.  The
+        half-window approach generated false positives on any healthy uptrend
+        where the second half simply had higher prices than the first half —
+        which is the normal state of a trending move.
+
+        Requires at least two swing pivots in the window to make a comparison.
+        Returns False (no divergence) if fewer than two pivots are found.
         """
-        if 'rsi_14' not in bars.columns or len(bars) < 10:
+        if 'rsi_14' not in bars.columns or len(bars) < 20:
             return False
 
-        recent = bars.tail(10)
+        recent    = bars.tail(20).reset_index(drop=True)
         price_col = 'high' if side == 'buy' else 'low'
 
-        price_vals = recent[price_col].dropna()
-        rsi_vals   = recent['rsi_14'].dropna()
+        # Find local swing highs (for longs) or swing lows (for shorts).
+        # A pivot at index i requires i-1 and i+1 to exist, so we search [1, n-2].
+        pivots = []
+        for i in range(1, len(recent) - 1):
+            if side == 'buy':
+                is_pivot = (recent[price_col].iloc[i] > recent[price_col].iloc[i - 1] and
+                            recent[price_col].iloc[i] > recent[price_col].iloc[i + 1])
+            else:
+                is_pivot = (recent[price_col].iloc[i] < recent[price_col].iloc[i - 1] and
+                            recent[price_col].iloc[i] < recent[price_col].iloc[i + 1])
+            if is_pivot:
+                pivots.append(i)
 
-        if len(price_vals) < 5 or len(rsi_vals) < 5:
+        if len(pivots) < 2:
             return False
 
-        # Compare first half vs second half
-        mid = len(price_vals) // 2
-        price_first_half = price_vals.iloc[:mid].max()
-        price_second_half = price_vals.iloc[mid:].max()
-        rsi_first_half   = rsi_vals.iloc[:mid].max()
-        rsi_second_half  = rsi_vals.iloc[mid:].max()
+        # Compare the last two swing pivots
+        prev_idx = pivots[-2]
+        last_idx = pivots[-1]
+
+        prev_price = recent[price_col].iloc[prev_idx]
+        last_price = recent[price_col].iloc[last_idx]
+        prev_rsi   = recent['rsi_14'].iloc[prev_idx]
+        last_rsi   = recent['rsi_14'].iloc[last_idx]
 
         if side == 'buy':
-            # Bearish divergence: price higher, RSI lower
-            return price_second_half > price_first_half and rsi_second_half < rsi_first_half - 3
+            # Bearish divergence: price higher high, RSI lower high (min 3pt gap)
+            return last_price > prev_price and last_rsi < prev_rsi - 3
         else:
-            # Bullish divergence (for shorts): price lower, RSI higher
-            return price_second_half < price_first_half and rsi_second_half > rsi_first_half + 3
+            # Bullish divergence for shorts: price lower low, RSI higher low (min 3pt gap)
+            return last_price < prev_price and last_rsi > prev_rsi + 3
 
     # ── Stop / target computation ─────────────────────────────────────────────
 

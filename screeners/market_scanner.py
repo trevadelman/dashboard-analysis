@@ -391,11 +391,18 @@ class MarketScanner:
         symbols with signal == "NONE" receive grade "—".
 
         Components (total 100 pts):
-          BB compression  25 pts — lower percentile = tighter squeeze = higher score
-          RS vs SPY       30 pts — primary alpha driver; outperformance capped at ±10pp
-          RVOL            20 pts — volume expansion, capped at 3x
-          RSI momentum    15 pts — distance from 50 in the correct direction
+          BB compression  20 pts — lower percentile = tighter squeeze = higher score
+          RS vs SPY       35 pts — primary alpha driver; outperformance capped at ±10pp
+          RVOL            25 pts — volume expansion is the most reliable breakout signal
+          RSI momentum    10 pts — directional confirmation only; not a primary driver
           ATR contraction 10 pts — atr_14/atr_50 ratio; lower = more contracted
+
+        Weighting rationale:
+          RS and RVOL are the two highest-conviction components of the strategy.
+          RS identifies stocks with institutional sponsorship; RVOL confirms that
+          the breakout has real participation.  BB compression and ATR contraction
+          are setup quality indicators — necessary but not sufficient.  RSI is a
+          lagging confirmation signal and should not dominate the score.
 
         Grade bands (signals only):
           A  80–100
@@ -405,31 +412,33 @@ class MarketScanner:
         """
         score = 0.0
 
-        # ── BB compression (25 pts) ───────────────────────────────────────────
+        # ── BB compression (20 pts) ───────────────────────────────────────────
         # bb_width_pct is the percentile rank of current BB width over 252 bars.
         # 0 = maximally compressed, 100 = maximally expanded.
         if bb_width_pct is not None:
-            score += max(0.0, (50.0 - bb_width_pct) / 50.0 * 25.0)
+            score += max(0.0, (50.0 - bb_width_pct) / 50.0 * 20.0)
 
-        # ── RS vs SPY (30 pts) ────────────────────────────────────────────────
-        # Primary alpha driver — weighted higher than the original 25 pts.
-        # Map [-10pp, +10pp] → [0, 30]. Anything above +10pp gets full 30 pts.
+        # ── RS vs SPY (35 pts) ────────────────────────────────────────────────
+        # Primary alpha driver — highest weight.
+        # Map [-10pp, +10pp] → [0, 35]. Anything above +10pp gets full 35 pts.
         if rs_vs_spy is not None:
-            score += max(0.0, min(30.0, (rs_vs_spy + 10.0) / 20.0 * 30.0))
+            score += max(0.0, min(35.0, (rs_vs_spy + 10.0) / 20.0 * 35.0))
 
-        # ── RVOL (20 pts) ─────────────────────────────────────────────────────
-        # Map [1x, 3x] → [0, 20]. Anything above 3x gets full 20 pts.
+        # ── RVOL (25 pts) ─────────────────────────────────────────────────────
+        # Volume expansion is the most reliable breakout confirmation signal.
+        # Map [1x, 3x] → [0, 25]. Anything above 3x gets full 25 pts.
         if rvol is not None:
-            score += max(0.0, min(20.0, (rvol - 1.0) / 2.0 * 20.0))
+            score += max(0.0, min(25.0, (rvol - 1.0) / 2.0 * 25.0))
 
-        # ── RSI momentum (15 pts) ─────────────────────────────────────────────
-        # For BULLISH: distance above 50, capped at 30 pts above 50 → full 15 pts.
+        # ── RSI momentum (10 pts) ─────────────────────────────────────────────
+        # Directional confirmation only — not a primary driver.
+        # For BULLISH: distance above 50, capped at 30 pts above 50 → full 10 pts.
         # For BEARISH: distance below 50, same logic.
         if rsi is not None:
             if regime == "BULLISH":
-                score += max(0.0, min(15.0, (rsi - 50.0) / 30.0 * 15.0))
+                score += max(0.0, min(10.0, (rsi - 50.0) / 30.0 * 10.0))
             else:
-                score += max(0.0, min(15.0, (50.0 - rsi) / 30.0 * 15.0))
+                score += max(0.0, min(10.0, (50.0 - rsi) / 30.0 * 10.0))
 
         # ── ATR contraction (10 pts) ──────────────────────────────────────────
         # atr_ratio = atr_14 / atr_50.  Ratio of 0.5 (very contracted) → full 10 pts.

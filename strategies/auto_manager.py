@@ -306,24 +306,29 @@ def run_position_review(bot, config, state: dict, timeframe: str) -> None:
                 logger.warning(f"No data for position review: {sym}")
                 continue
 
-            result = reviewer.review(data, pos)
-            verdict = result.get("verdict", "HOLD")
+            # Fetch open orders for this symbol so the reviewer can read the
+            # current stop and target from the bracket legs.
+            all_orders = bot.get_orders(status='open')
+            sym_orders = [o for o in all_orders if o.get('symbol', '').upper() == sym]
+
+            result = reviewer.review(pos, sym_orders, data)
+            verdict = result.verdict
 
             _log_action(
                 f"REVIEW_{verdict}", sym,
                 {
                     "timeframe":        pos_tf,
-                    "suggested_stop":   result.get("suggested_stop"),
-                    "suggested_target": result.get("suggested_target"),
-                    "reason":           result.get("reason"),
+                    "suggested_stop":   result.suggested_stop,
+                    "suggested_target": result.suggested_target,
+                    "reason":           result.reason,
                 },
                 f"Verdict: {verdict}",
             )
 
             if verdict == "TRAIL_STOP":
-                new_stop   = result.get("suggested_stop")
-                new_target = result.get("suggested_target")
-                current_stop = result.get("current_stop")
+                new_stop     = result.suggested_stop
+                new_target   = result.suggested_target
+                current_stop = result.current_stop
 
                 stop_changed = (
                     new_stop is not None
@@ -348,7 +353,7 @@ def run_position_review(bot, config, state: dict, timeframe: str) -> None:
                 _record_action_time(sym, state)
                 _log_action(
                     "AUTO_EXIT", sym,
-                    {"reason": result.get("reason"), "close_result": close_result},
+                    {"reason": result.reason, "close_result": close_result},
                     close_result.get("status", "unknown"),
                 )
 
@@ -383,10 +388,11 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
     from screeners.market_scanner import MarketScanner
 
     # Crypto watchlists trade 24/7; equity watchlists are gated to market hours.
-    sample_symbols = _resolve_watchlist_symbols(config)
-    first_sym = sample_symbols[0] if sample_symbols else ""
-    if not is_tradeable_now(first_sym):
-        logger.debug(f"Entry scan ({timeframe}) skipped — outside tradeable hours for {config.BOT_SCAN_WATCHLIST}")
+    # Gate on the watchlist type (is_crypto_watchlist) rather than classifying
+    # the first symbol — the first symbol could change if the list is reordered,
+    # and a mixed list would produce the wrong gate.
+    if not is_crypto_watchlist(config) and not is_market_hours():
+        logger.debug(f"Entry scan ({timeframe}) skipped — outside market hours for {config.BOT_SCAN_WATCHLIST}")
         return
 
     ok, reason = check_circuit_breakers(bot, config, state)
@@ -466,7 +472,24 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
 
             quantity = bot.calculate_position_size(entry_price, stop_price)
             if quantity < 1:
-                quantity = 1
+                # Risk parameters require less than 1 share — the position would
+                # be too small to be meaningful or would bypass risk management
+                # entirely if forced to 1 share.  Skip rather than override.
+                logger.info(
+                    f"Entry skipped for {sym} — risk-sized quantity < 1 share "
+                    f"(entry=${entry_price:.2f}, stop=${stop_price:.2f})"
+                )
+                _log_action(
+                    "ENTRY_SKIPPED", sym,
+                    {
+                        "reason":       "position too small for risk parameters",
+                        "entry_price":  entry_price,
+                        "stop_price":   stop_price,
+                        "timeframe":    timeframe,
+                    },
+                    "Skipped — risk-sized quantity < 1 share",
+                )
+                continue
 
             # Submit bracket order
             try:

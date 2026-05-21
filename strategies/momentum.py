@@ -55,6 +55,9 @@ class SignalHierarchy:
         'long': {
             # ── Tier 1 ──────────────────────────────────────────────────────────
             # Regime uses ema21/ema50 only — ema9 is a trigger signal, not a regime gate.
+            # ROC is excluded: EMA21/50 alignment + RSI is sufficient for regime detection.
+            # A ROC > -1.0 threshold was so loose it passed on virtually every setup,
+            # adding no filtering value while creating a maintenance hazard.
             'ema_medium': 21, 'ema_long': 50,
             'rsi_regime_min': 45,       # RSI floor for BULLISH regime (daily bars are slower)
             'atr_pct_max': 10.0,        # ATR as % of price — volatility guard
@@ -67,6 +70,10 @@ class SignalHierarchy:
             'rsi_buy': 55,              # RSI trigger threshold (bull)
             'rsi_sell': 45,             # RSI trigger threshold (bear)
             'extension_limit': 1.5,     # max distance from EMA9 in ATR units (anti-chase)
+            # compression_lookback: bars used to define the compression zone for stop
+            # placement and breakout level. Daily = 1 trading week; hourly = ~2 days;
+            # 15-min = ~5 hours. Must be wide enough to capture the full compression zone.
+            'compression_lookback': 5,
             # ── Tier 4 ──────────────────────────────────────────────────────────
             'min_rr_ratio': 2.0,
             # ── Misc ────────────────────────────────────────────────────────────
@@ -86,6 +93,7 @@ class SignalHierarchy:
             'rsi_buy': 58,
             'rsi_sell': 42,
             'extension_limit': 1.5,
+            'compression_lookback': 15,
             'min_rr_ratio': 1.5,
             'atr_multiplier': 1.5,
             'price_range_min': 0.5, 'atr_pct_min': 0.3,
@@ -103,6 +111,7 @@ class SignalHierarchy:
             'rsi_buy': 60,
             'rsi_sell': 40,
             'extension_limit': 1.5,
+            'compression_lookback': 20,
             'min_rr_ratio': 1.2,
             'atr_multiplier': 1.0,
             'price_range_min': 0.2, 'atr_pct_min': 0.2,
@@ -247,23 +256,17 @@ class SignalHierarchy:
         bearish_ema = price < ema21 < ema50
 
         details.append(f"EMA stack: price={price:.2f} | 21={ema21:.2f} | 50={ema50:.2f}")
-        details.append(f"RSI={rsi:.1f} (min={self.params['rsi_regime_min']}), ROC(10)={roc:.2f}%")
+        details.append(f"RSI={rsi:.1f} (min={self.params['rsi_regime_min']})")
 
-        # ROC threshold: allow a small negative value (-1.0%) to avoid filtering valid
-        # consolidation setups where ROC dips briefly negative during healthy pauses.
-        # A strict > 0 requirement rejects the best compression entries.
-        roc_bullish = roc > -1.0
-        roc_bearish = roc < 1.0
-
-        if bullish_ema and rsi >= self.params['rsi_regime_min'] and roc_bullish:
-            details.append("✅ BULLISH regime — EMA21/50 aligned + RSI + ROC not deeply negative")
+        if bullish_ema and rsi >= self.params['rsi_regime_min']:
+            details.append("✅ BULLISH regime — EMA21/50 aligned + RSI confirming")
             return 'BULLISH', details
 
-        if bearish_ema and rsi <= (100 - self.params['rsi_regime_min']) and roc_bearish:
-            details.append("✅ BEARISH regime — EMA21/50 aligned + RSI + ROC not deeply positive")
+        if bearish_ema and rsi <= (100 - self.params['rsi_regime_min']):
+            details.append("✅ BEARISH regime — EMA21/50 aligned + RSI confirming")
             return 'BEARISH', details
 
-        details.append("❌ Regime unclear — EMA21/50 not aligned or RSI/ROC not confirming")
+        details.append("❌ Regime unclear — EMA21/50 not aligned or RSI not confirming")
         return 'NO_TRADE', details
 
     # ── Tier 2: Setup & Trigger ───────────────────────────────────────────────
@@ -414,12 +417,18 @@ class SignalHierarchy:
         # ── All conditions met — build signal ─────────────────────────────────
         # Entry: limit at the breakout level + small ATR buffer.
         # Stop: structural invalidation (compression low/high ± 0.25×ATR).
+        #   Uses compression_lookback bars (timeframe-specific) to define the
+        #   compression zone. Daily=5 bars, hourly=15 bars, 15-min=20 bars.
+        #   A fixed 5-bar window was too narrow for intraday timeframes — the
+        #   compression zone spans many more bars, so the stop ended up inside
+        #   the zone rather than below it, causing premature exits.
         # Target: 2R from the limit entry.
         rs_str = f"{rs:.1f}pp" if not math.isnan(rs) else "N/A (benchmark)"
+        lookback = self.params['compression_lookback']
 
         if regime == 'BULLISH':
             limit_entry     = round(breakout_level + atr * 0.10, 2)
-            compression_low = data['low'].tail(5).min()
+            compression_low = data['low'].tail(lookback).min()
             stop_price      = round(compression_low - atr * 0.25, 2)
             risk            = abs(limit_entry - stop_price)
             target_price    = round(limit_entry + risk * 2.0, 2)
@@ -428,7 +437,7 @@ class SignalHierarchy:
                                f"EMA21/50 aligned + BB compressed + RS {rs_str} + RVOL {rvol:.1f}x")
         else:
             limit_entry      = round(breakdown_level - atr * 0.10, 2)
-            compression_high = data['high'].tail(5).max()
+            compression_high = data['high'].tail(lookback).max()
             stop_price       = round(compression_high + atr * 0.25, 2)
             risk             = abs(stop_price - limit_entry)
             target_price     = round(limit_entry - risk * 2.0, 2)
