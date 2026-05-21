@@ -184,11 +184,16 @@
                             <div class="form-control">
                                 <label class="label py-1"><span class="label-text text-xs font-medium">Scan Watchlist</span></label>
                                 <select id="setting-bot-watchlist" class="select select-bordered select-sm">
-                                    <option value="sp500_top100">S&amp;P 500 Top 100</option>
-                                    <option value="nasdaq100_top50">Nasdaq 100 Top 50</option>
-                                    <option value="sector_etfs">Sector ETFs</option>
-                                    <option value="all_sectors">All Sectors (~500)</option>
-                                    <option value="crypto_top10">Crypto Top 10</option>
+                                    <optgroup label="Curated Lists">
+                                        <option value="sp500_top100">S&amp;P 500 Top 100</option>
+                                        <option value="nasdaq100_top50">Nasdaq 100 Top 50</option>
+                                        <option value="sector_etfs">Sector ETFs</option>
+                                        <option value="all_sectors">All Sectors (~500)</option>
+                                    </optgroup>
+                                    <optgroup label="Crypto">
+                                        <option value="crypto_top10">Crypto Top 10</option>
+                                        <option value="crypto_all">Crypto All (Alpaca)</option>
+                                    </optgroup>
                                 </select>
                             </div>
                             <div class="form-control">

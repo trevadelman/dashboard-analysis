@@ -338,9 +338,16 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
 
     # Crypto watchlists trade 24/7; equity watchlists are gated to market hours.
     # We check the first symbol in the resolved list to determine the asset class.
+    # Dynamic lists (all_universe, crypto_all) are resolved via their loader functions.
     from screeners.market_scanner import SYMBOL_LISTS
+    from screeners.symbol_lists import load_cached_crypto_universe, load_cached_universe
     list_name = config.BOT_SCAN_WATCHLIST
-    sample_symbols = SYMBOL_LISTS.get(list_name, [])
+    if list_name == "crypto_all":
+        sample_symbols = load_cached_crypto_universe()
+    elif list_name == "all_universe":
+        sample_symbols = load_cached_universe()
+    else:
+        sample_symbols = SYMBOL_LISTS.get(list_name, [])
     first_sym = sample_symbols[0] if sample_symbols else ""
     if not is_tradeable_now(first_sym):
         logger.debug(f"Entry scan ({timeframe}) skipped — outside tradeable hours for {list_name}")
