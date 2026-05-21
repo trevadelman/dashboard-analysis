@@ -13,6 +13,43 @@ let _sortAsc = false;
 let _filterText = '';
 let _filterTimer = null;
 
+// Row-append batching — accumulate incoming rows and flush to the DOM
+// at most once per animation frame.  Without this, appending 4,000 rows
+// one-by-one causes a layout/paint storm that freezes the browser.
+let _pendingRows = [];
+let _rafPending  = false;
+
+function _flushPendingRows() {
+    _rafPending = false;
+    if (_pendingRows.length === 0) return;
+
+    const tbody = document.getElementById('scan-results-body');
+    const placeholder = tbody.querySelector('td[colspan]');
+    if (placeholder) placeholder.closest('tr').remove();
+
+    // Signals go to the top, non-signals to the bottom.
+    // Build two fragments so we only touch the DOM twice per flush.
+    const topFrag    = document.createDocumentFragment();
+    const bottomFrag = document.createDocumentFragment();
+
+    for (const r of _pendingRows) {
+        if (!_matchesFilter(r)) continue;
+        const row = _buildRow(r);
+        if (r.signal !== 'NONE') {
+            topFrag.appendChild(row);
+        } else {
+            bottomFrag.appendChild(row);
+        }
+    }
+
+    if (topFrag.childNodes.length > 0) {
+        tbody.insertBefore(topFrag, tbody.firstChild);
+    }
+    tbody.appendChild(bottomFrag);
+
+    _pendingRows = [];
+}
+
 const LIST_LABELS = {
     all_sectors:  'All Sectors',
     all_universe: 'Full Universe',
@@ -162,7 +199,15 @@ function onStart(evt) {
 
 function onResult(evt) {
     scanResults.push(evt);
-    appendRow(evt);
+    // Queue the row for the next animation frame flush instead of touching
+    // the DOM immediately.  This coalesces rapid-fire SSE events into a
+    // single layout/paint pass per frame, preventing browser freeze on
+    // large scans (4,000+ symbols arriving in quick bursts).
+    _pendingRows.push(evt);
+    if (!_rafPending) {
+        _rafPending = true;
+        requestAnimationFrame(_flushPendingRows);
+    }
 }
 
 function onProgress(evt) {

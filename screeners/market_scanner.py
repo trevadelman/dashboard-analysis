@@ -5,12 +5,15 @@ Streams results via SSE as each symbol completes.
 
 Fetches bars in batches of BATCH_SIZE symbols per Alpaca request to stay
 well under the 200 req/min cap while dramatically reducing total scan time.
+Batches are fetched concurrently (up to _MAX_FETCH_WORKERS threads) so the
+total fetch time scales with the slowest batch, not the sum of all batches.
 """
 
 import json
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Generator
 
@@ -63,9 +66,15 @@ _BATCH_SIZE = 50
 # 5 symbols × ~2,880 15-min bars (30 days) = ~14,400 rows — safely under the limit.
 _CRYPTO_BATCH_SIZE = 5
 
-# Seconds between batch requests — keeps us well under Alpaca's 200 req/min cap.
-# At 50 symbols/batch and 0.36s/batch: ~8,300 symbols/min theoretical throughput.
+# Seconds to sleep after the benchmark fetch before starting the concurrent
+# batch phase — a small buffer to avoid bursting the rate limit.
 _REQUEST_INTERVAL = 0.36
+
+# Maximum number of concurrent batch-fetch threads.
+# Each thread makes one Alpaca bars request.  At 50 symbols/batch and 4 workers,
+# a 500-symbol universe (10 batches) completes in ~ceil(10/4) = 3 round-trips
+# instead of 10 sequential ones.  Well under Alpaca's 200 req/min cap.
+_MAX_FETCH_WORKERS = 4
 
 
 class MarketScanner:
@@ -134,31 +143,46 @@ class MarketScanner:
             self._benchmark_data = spy_batch.get("SPY", pd.DataFrame())
         time.sleep(_REQUEST_INTERVAL)
 
-        # Process symbols in batches.
+        # Split the symbol list into batches.
         # Crypto uses a smaller batch size to avoid hitting Alpaca's per-response
         # row limit, which silently truncates symbols at the end of large batches.
         batch_size = CRYPTO_BATCH_SIZE if is_crypto_scan else EQUITY_BATCH_SIZE
-        for batch_start in range(0, total, batch_size):
-            batch = symbols[batch_start : batch_start + batch_size]
+        batches = [symbols[i : i + batch_size] for i in range(0, total, batch_size)]
+        fetch_fn = self._fetch_crypto_bars_batch if is_crypto_scan else self._fetch_bars_batch
 
-            # Fetch all bars in the batch with a single API call
-            if is_crypto_scan:
-                bars_by_symbol = self._fetch_crypto_bars_batch(batch, timeframe=timeframe)
-            else:
-                bars_by_symbol = self._fetch_bars_batch(batch, timeframe=timeframe)
-            time.sleep(_REQUEST_INTERVAL)
+        # Fetch batches concurrently and stream results as each batch completes.
+        # _MAX_FETCH_WORKERS threads run in parallel — each makes one Alpaca request.
+        # Results are yielded as soon as a batch's future resolves, so the table
+        # fills progressively rather than waiting for all batches to finish.
+        # Symbol ordering within each batch is preserved; cross-batch order is
+        # arrival order (whichever batch finishes first streams first).
+        with ThreadPoolExecutor(max_workers=_MAX_FETCH_WORKERS) as pool:
+            futures = {
+                pool.submit(fetch_fn, batch, timeframe): batch
+                for batch in batches
+            }
+            for future in as_completed(futures):
+                batch = futures[future]
+                try:
+                    bars_by_symbol = future.result()
+                except Exception as e:
+                    logger.warning(
+                        f"Batch fetch failed for {len(batch)} symbols "
+                        f"({batch[0]}…): {e}"
+                    )
+                    bars_by_symbol = {}
 
-            for symbol in batch:
-                bars = bars_by_symbol.get(symbol, pd.DataFrame())
-                result = self._scan_one_from_bars(symbol, bars, timeframe=timeframe)
-                scanned += 1
+                for symbol in batch:
+                    bars = bars_by_symbol.get(symbol, pd.DataFrame())
+                    result = self._scan_one_from_bars(symbol, bars, timeframe=timeframe)
+                    scanned += 1
 
-                if result is not None:
-                    if result.get("signal") in ("BUY", "SELL"):
-                        signals += 1
-                    yield self._event({"type": "result", **result})
+                    if result is not None:
+                        if result.get("signal") in ("BUY", "SELL"):
+                            signals += 1
+                        yield self._event({"type": "result", **result})
 
-                yield self._event({"type": "progress", "scanned": scanned, "total": total})
+                    yield self._event({"type": "progress", "scanned": scanned, "total": total})
 
         elapsed = round(time.time() - start_ts, 1)
         yield self._event({
