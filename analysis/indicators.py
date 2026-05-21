@@ -24,12 +24,19 @@ class TechnicalIndicators:
 
     @staticmethod
     def rsi(data, column='close', period=14):
-        """Calculate Relative Strength Index."""
+        """
+        Calculate Relative Strength Index using Wilder's Smoothed Moving Average (SMMA).
+
+        Wilder's original RSI uses a smoothed/exponential average with alpha = 1/period,
+        equivalent to ewm(com=period-1).  This matches TradingView, Bloomberg, and all
+        major charting platforms.  The simple rolling mean diverges by 2–8 points in
+        trending markets and would miscalibrate the RSI thresholds used in SignalHierarchy.
+        """
         delta    = data[column].diff()
         gain     = delta.where(delta > 0, 0)
         loss     = -delta.where(delta < 0, 0)
-        avg_gain = gain.rolling(window=period).mean()
-        avg_loss = loss.rolling(window=period).mean()
+        avg_gain = gain.ewm(com=period - 1, min_periods=period).mean()
+        avg_loss = loss.ewm(com=period - 1, min_periods=period).mean()
         rs       = avg_gain / avg_loss
         return 100 - (100 / (1 + rs))
 
@@ -103,15 +110,31 @@ class TechnicalIndicators:
         return stock_return - spy_aligned
 
     @staticmethod
-    def vwap(data):
+    def session_vwap(data):
         """
-        Calculate VWAP (Volume Weighted Average Price).
-        Meaningful for intraday data; on daily data it approximates a
-        volume-weighted average close.
+        Calculate session-reset VWAP (Volume Weighted Average Price).
+
+        Resets at the start of each trading session (date boundary) so the value
+        is meaningful on both daily and intraday bars.  On daily bars each bar IS
+        its own session, so VWAP equals the typical price weighted by that day's
+        volume — equivalent to the daily typical price.
+
+        The previous cumulative implementation compounded across sessions, making
+        the value meaningless after the first day on intraday timeframes.
         """
         typical_price = (data['high'] + data['low'] + data['close']) / 3
-        cum_tp_vol    = (typical_price * data['volume']).cumsum()
-        cum_vol       = data['volume'].cumsum()
+
+        # Determine the session date for each bar
+        if hasattr(data.index, 'date'):
+            session_date = pd.Series(data.index.date, index=data.index)
+        else:
+            session_date = pd.Series(data.index, index=data.index)
+
+        tp_vol = typical_price * data['volume']
+
+        # Cumsum within each session group
+        cum_tp_vol = tp_vol.groupby(session_date).cumsum()
+        cum_vol    = data['volume'].groupby(session_date).cumsum()
         return cum_tp_vol / cum_vol
 
     @staticmethod
@@ -122,15 +145,6 @@ class TechnicalIndicators:
         """
         avg_vol = data['volume'].rolling(window=period).mean()
         return data['volume'] / avg_vol
-
-    @staticmethod
-    def stochastic(data, k_period=14, d_period=3):
-        """Calculate Stochastic Oscillator."""
-        low_min  = data['low'].rolling(window=k_period).min()
-        high_max = data['high'].rolling(window=k_period).max()
-        k        = 100 * ((data['close'] - low_min) / (high_max - low_min))
-        d        = k.rolling(window=d_period).mean()
-        return k, d
 
     @staticmethod
     def calculate_all(data, spy_data=None):
@@ -159,34 +173,29 @@ class TechnicalIndicators:
         df['ema_200'] = TechnicalIndicators.ema(df, period=200)
 
         # ── Momentum ─────────────────────────────────────────────────────────
-        df['rsi_14']  = TechnicalIndicators.rsi(df, period=14)
-        df['roc_10']  = TechnicalIndicators.rate_of_change(df, period=10)
+        df['rsi_14']     = TechnicalIndicators.rsi(df, period=14)
+        df['roc_10']     = TechnicalIndicators.rate_of_change(df, period=10)
         df['ema9_slope'] = TechnicalIndicators.ema_slope(df, period=9, slope_period=3)
 
         # ── Volatility ───────────────────────────────────────────────────────
         upper, middle, lower = TechnicalIndicators.bollinger_bands(df)
-        df['bb_upper']  = upper
-        df['bb_middle'] = middle
-        df['bb_lower']  = lower
+        df['bb_upper']     = upper
+        df['bb_middle']    = middle
+        df['bb_lower']     = lower
         df['bb_width_pct'] = TechnicalIndicators.bb_width_percentile(df)
 
-        df['atr_14']     = TechnicalIndicators.atr(df, period=14)
+        df['atr_14']       = TechnicalIndicators.atr(df, period=14)
         df['atr_pct_rank'] = TechnicalIndicators.atr_percentile(df, period=14)
 
         # ── Volume ───────────────────────────────────────────────────────────
         df['rvol_20'] = TechnicalIndicators.relative_volume(df, period=20)
-        df['vwap']    = TechnicalIndicators.vwap(df)
+        df['vwap']    = TechnicalIndicators.session_vwap(df)
 
         # ── Relative Strength vs SPY ─────────────────────────────────────────
         if spy_data is not None and not spy_data.empty:
             df['rs_vs_spy_20'] = TechnicalIndicators.relative_strength_vs_spy(df, spy_data, period=20)
         else:
             df['rs_vs_spy_20'] = np.nan
-
-        # ── Stochastic (kept for completeness) ───────────────────────────────
-        k, d = TechnicalIndicators.stochastic(df)
-        df['stoch_k'] = k
-        df['stoch_d'] = d
 
         logger.info("Calculated all technical indicators")
         return df

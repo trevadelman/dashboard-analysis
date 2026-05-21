@@ -17,7 +17,6 @@ import logging
 import time
 
 from analysis.indicators import TechnicalIndicators
-from analysis.patterns import ChartPatterns
 from ai_strategy import AIStrategyGenerator
 from strategies.momentum import SignalHierarchy, TIMEFRAME_CONFIG
 from config import Config
@@ -159,9 +158,6 @@ class TradingBot:
                     pass  # RS vs SPY will be NaN — non-fatal
 
             bars = TechnicalIndicators.calculate_all(bars, spy_data=spy_data)
-
-            # Detect chart patterns
-            bars = ChartPatterns.detect_all_patterns(bars)
 
             self._data_cache[cache_key] = (bars, time.time())
 

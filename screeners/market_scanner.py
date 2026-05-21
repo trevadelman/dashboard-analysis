@@ -346,6 +346,17 @@ class MarketScanner:
                     signal = "SELL"
             tier2_reason = tier2_details[-1] if tier2_details else ""
 
+        # Compute the actual ATR contraction ratio (atr_14 / atr_50) for the scorer.
+        # This replaces the previous proxy that double-counted BB width percentile.
+        atr_ratio = None
+        if "atr_14" in bars.columns:
+            atr_14_val = latest.get("atr_14")
+            atr_50_val = bars["atr_14"].rolling(50).mean().iloc[-1]
+            if (atr_14_val is not None and not pd.isna(atr_14_val)
+                    and atr_50_val is not None and not pd.isna(atr_50_val)
+                    and atr_50_val > 0):
+                atr_ratio = round(float(atr_14_val) / float(atr_50_val), 3)
+
         score, grade = self._score_setup(
             signal=signal,
             bb_width_pct=bb_width_pct,
@@ -353,6 +364,7 @@ class MarketScanner:
             rvol=rvol,
             rsi=rsi,
             regime=regime,
+            atr_ratio=atr_ratio,
         )
 
         return {
@@ -380,6 +392,7 @@ class MarketScanner:
         rvol: float | None,
         rsi: float | None,
         regime: str,
+        atr_ratio: float | None = None,
     ) -> tuple[int, str]:
         """
         Score a setup 0–100 from the data already collected during the scan.
@@ -390,10 +403,10 @@ class MarketScanner:
 
         Components (total 100 pts):
           BB compression  25 pts — lower percentile = tighter squeeze = higher score
-          RS vs SPY       25 pts — outperformance capped at ±10pp range
+          RS vs SPY       30 pts — primary alpha driver; outperformance capped at ±10pp
           RVOL            20 pts — volume expansion, capped at 3x
           RSI momentum    15 pts — distance from 50 in the correct direction
-          ATR contraction 15 pts — proxied by BB score headroom
+          ATR contraction 10 pts — atr_14/atr_50 ratio; lower = more contracted
 
         Grade bands (signals only):
           A  80–100
@@ -409,10 +422,11 @@ class MarketScanner:
         if bb_width_pct is not None:
             score += max(0.0, (50.0 - bb_width_pct) / 50.0 * 25.0)
 
-        # ── RS vs SPY (25 pts) ────────────────────────────────────────────────
-        # Map [-10pp, +10pp] → [0, 25]. Anything above +10pp gets full 25 pts.
+        # ── RS vs SPY (30 pts) ────────────────────────────────────────────────
+        # Primary alpha driver — weighted higher than the original 25 pts.
+        # Map [-10pp, +10pp] → [0, 30]. Anything above +10pp gets full 30 pts.
         if rs_vs_spy is not None:
-            score += max(0.0, min(25.0, (rs_vs_spy + 10.0) / 20.0 * 25.0))
+            score += max(0.0, min(30.0, (rs_vs_spy + 10.0) / 20.0 * 30.0))
 
         # ── RVOL (20 pts) ─────────────────────────────────────────────────────
         # Map [1x, 3x] → [0, 20]. Anything above 3x gets full 20 pts.
@@ -428,10 +442,12 @@ class MarketScanner:
             else:
                 score += max(0.0, min(15.0, (50.0 - rsi) / 30.0 * 15.0))
 
-        # ── ATR contraction (15 pts) ──────────────────────────────────────────
-        # Proxied by BB score headroom: very compressed BB → full 15 pts.
-        if bb_width_pct is not None:
-            score += max(0.0, min(15.0, (50.0 - bb_width_pct) / 30.0 * 15.0))
+        # ── ATR contraction (10 pts) ──────────────────────────────────────────
+        # atr_ratio = atr_14 / atr_50.  Ratio of 0.5 (very contracted) → full 10 pts.
+        # Ratio of 1.0 (at baseline) → 0 pts.  Capped at 10 pts.
+        # Falls back to 0 pts if the ratio was not computed (insufficient data).
+        if atr_ratio is not None:
+            score += max(0.0, min(10.0, (1.0 - atr_ratio) / 0.5 * 10.0))
 
         total = round(score)
 

@@ -249,12 +249,18 @@ class SignalHierarchy:
         details.append(f"EMA stack: price={price:.2f} | 21={ema21:.2f} | 50={ema50:.2f}")
         details.append(f"RSI={rsi:.1f} (min={self.params['rsi_regime_min']}), ROC(10)={roc:.2f}%")
 
-        if bullish_ema and rsi >= self.params['rsi_regime_min'] and roc > 0:
-            details.append("✅ BULLISH regime — EMA21/50 aligned + RSI + positive ROC")
+        # ROC threshold: allow a small negative value (-1.0%) to avoid filtering valid
+        # consolidation setups where ROC dips briefly negative during healthy pauses.
+        # A strict > 0 requirement rejects the best compression entries.
+        roc_bullish = roc > -1.0
+        roc_bearish = roc < 1.0
+
+        if bullish_ema and rsi >= self.params['rsi_regime_min'] and roc_bullish:
+            details.append("✅ BULLISH regime — EMA21/50 aligned + RSI + ROC not deeply negative")
             return 'BULLISH', details
 
-        if bearish_ema and rsi <= (100 - self.params['rsi_regime_min']) and roc < 0:
-            details.append("✅ BEARISH regime — EMA21/50 aligned + RSI + negative ROC")
+        if bearish_ema and rsi <= (100 - self.params['rsi_regime_min']) and roc_bearish:
+            details.append("✅ BEARISH regime — EMA21/50 aligned + RSI + ROC not deeply positive")
             return 'BEARISH', details
 
         details.append("❌ Regime unclear — EMA21/50 not aligned or RSI/ROC not confirming")
@@ -335,20 +341,23 @@ class SignalHierarchy:
             details.append("❌ Price not on correct side of EMA9 — no trigger")
             return None, details
 
-        # ── Trigger: Breakout above prior 5-bar high ──────────────────────────
+        # ── Trigger: Breakout above prior 15-bar high ─────────────────────────
+        # 15 bars covers 3 trading weeks on daily, ~2 days on hourly, ~4 hours on 15m.
+        # A 5-bar window was too reactive — it triggered on minor intraday noise
+        # rather than a true range expansion out of the compression zone.
         atr = latest.get('atr_14', price * 0.02)
 
         if regime == 'BULLISH':
-            breakout_level = data['high'].iloc[-6:-1].max()
+            breakout_level = data['high'].iloc[-16:-1].max()
             broke_out      = price > breakout_level
-            details.append(f"Breakout level: {breakout_level:.2f} | price={price:.2f} → {'✅ BROKE OUT' if broke_out else '❌ Still inside range'}")
+            details.append(f"Breakout level (15-bar high): {breakout_level:.2f} | price={price:.2f} → {'✅ BROKE OUT' if broke_out else '❌ Still inside range'}")
             if not broke_out:
                 details.append("❌ No breakout of compression range — wait for expansion")
                 return None, details
         else:
-            breakdown_level = data['low'].iloc[-6:-1].min()
+            breakdown_level = data['low'].iloc[-16:-1].min()
             broke_out       = price < breakdown_level
-            details.append(f"Breakdown level: {breakdown_level:.2f} | price={price:.2f} → {'✅ BROKE DOWN' if broke_out else '❌ Still inside range'}")
+            details.append(f"Breakdown level (15-bar low): {breakdown_level:.2f} | price={price:.2f} → {'✅ BROKE DOWN' if broke_out else '❌ Still inside range'}")
             if not broke_out:
                 details.append("❌ No breakdown of compression range — wait for expansion")
                 return None, details

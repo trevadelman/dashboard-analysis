@@ -153,22 +153,33 @@ class AIStrategyGenerator:
         """Build the prompt for strategy generation."""
         recent_data = data.tail(5)[['open', 'high', 'low', 'close', 'volume']].to_dict('records')
 
+        def fmt(val, decimals=2):
+            return f"{val:.{decimals}f}" if isinstance(val, (int, float)) else 'N/A'
+
+        # ATR contraction ratio: atr_14 / atr_50 rolling mean
+        atr_14_val = latest.get('atr_14')
+        atr_50_val = None
+        if 'atr_14' in data.columns and len(data) >= 50:
+            atr_50_val = data['atr_14'].rolling(50).mean().iloc[-1]
+        atr_ratio_str = (f"{atr_14_val / atr_50_val:.2f}" if atr_14_val and atr_50_val and atr_50_val > 0
+                         else 'N/A')
+
         prompt = f"""Analyze {symbol} and provide a trading strategy.
 
 MARKET DATA (Last 5 periods):
 {json.dumps(recent_data, indent=2)}
 
 CURRENT TECHNICAL INDICATORS:
-- RSI(14): {latest.get('rsi_14', 'N/A')}
-- MACD: {latest.get('macd_line', 'N/A')} (Signal: {latest.get('macd_signal', 'N/A')})
-- SMA(20): {latest.get('sma_20', 'N/A')}
-- SMA(50): {latest.get('sma_50', 'N/A')}
-- Bollinger Bands: Upper={latest.get('bb_upper', 'N/A')}, Lower={latest.get('bb_lower', 'N/A')}
-
-CHART PATTERNS:
-- Double Top: {latest.get('double_top', False)}
-- Double Bottom: {latest.get('double_bottom', False)}
-- Head & Shoulders: {latest.get('head_and_shoulders', False)}
+- RSI(14): {fmt(latest.get('rsi_14'))}
+- EMA9 slope (3-bar): {fmt(latest.get('ema9_slope'), 3)}%
+- ROC(10): {fmt(latest.get('roc_10'))}%
+- EMA9: {fmt(latest.get('ema_9'))} | EMA21: {fmt(latest.get('ema_21'))} | EMA50: {fmt(latest.get('ema_50'))}
+- SMA20: {fmt(latest.get('sma_20'))} | SMA50: {fmt(latest.get('sma_50'))} | SMA200: {fmt(latest.get('sma_200'))}
+- Bollinger Bands: Upper={fmt(latest.get('bb_upper'))}, Middle={fmt(latest.get('bb_middle'))}, Lower={fmt(latest.get('bb_lower'))}
+- BB Width Percentile: {fmt(latest.get('bb_width_pct'))} (0=max compressed, 100=max expanded)
+- ATR(14): {fmt(latest.get('atr_14'))} | ATR contraction ratio (14/50): {atr_ratio_str}
+- RVOL(20): {fmt(latest.get('rvol_20'))}x
+- RS vs SPY (20d): {fmt(latest.get('rs_vs_spy_20'))}pp
 """
 
         if additional_context:
@@ -213,16 +224,27 @@ Focus on risk management and favorable risk-reward ratios (minimum 2:1).
         def fmt(val, decimals=2):
             return f"{val:.{decimals}f}" if isinstance(val, (int, float)) else 'N/A'
 
+        # ATR contraction ratio for commentary context
+        atr_14_val = latest.get('atr_14')
+        atr_50_val = None
+        if 'atr_14' in data.columns and len(data) >= 50:
+            atr_50_val = data['atr_14'].rolling(50).mean().iloc[-1]
+        atr_ratio_str = (f"{atr_14_val / atr_50_val:.2f}" if atr_14_val and atr_50_val and atr_50_val > 0
+                         else 'N/A')
+
         prompt = f"""You are reviewing a multi-tier trading signal analysis for {symbol}.
 
 CURRENT MARKET DATA:
 - Price: {fmt(latest.get('close'))}
 - RSI(14): {fmt(latest.get('rsi_14'))}
-- MACD Histogram: {fmt(latest.get('macd_histogram'), 4)}
-- SMA(20): {fmt(latest.get('sma_20'))}
-- SMA(50): {fmt(latest.get('sma_50'))}
-- SMA(200): {fmt(latest.get('sma_200'))}
-- ATR(14): {fmt(latest.get('atr_14'))}
+- EMA9 slope (3-bar): {fmt(latest.get('ema9_slope'), 3)}%
+- ROC(10): {fmt(latest.get('roc_10'))}%
+- EMA9: {fmt(latest.get('ema_9'))} | EMA21: {fmt(latest.get('ema_21'))} | EMA50: {fmt(latest.get('ema_50'))}
+- SMA(20): {fmt(latest.get('sma_20'))} | SMA(50): {fmt(latest.get('sma_50'))} | SMA(200): {fmt(latest.get('sma_200'))}
+- BB Width Percentile: {fmt(latest.get('bb_width_pct'))} (0=max compressed, 100=max expanded)
+- ATR(14): {fmt(latest.get('atr_14'))} | ATR contraction ratio (14/50): {atr_ratio_str}
+- RVOL(20): {fmt(latest.get('rvol_20'))}x
+- RS vs SPY (20d): {fmt(latest.get('rs_vs_spy_20'))}pp
 
 ANALYSIS RESULTS:
 {chr(10).join(tier_summary)}
