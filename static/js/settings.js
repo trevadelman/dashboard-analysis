@@ -174,8 +174,12 @@ async function loadAppSettings() {
         }
 
         // App tab — risk
-        document.getElementById('setting-max-positions').value = s.max_positions   || '5';
-        document.getElementById('setting-risk-pct').value      = s.risk_percentage || '2.0';
+        document.getElementById('setting-max-positions').value  = s.max_positions    || '5';
+        document.getElementById('setting-risk-pct').value       = s.risk_percentage  || '2.0';
+        document.getElementById('setting-max-pos-pct').value    = s.max_position_pct || '20.0';
+
+        // Cache settings globally so the trade modal can read them without an extra fetch
+        window._appSettings = s;
 
         // App tab — autonomous bot
         const autonomous = (s.bot_autonomous || 'false').toLowerCase() === 'true';
@@ -246,6 +250,7 @@ async function saveAppSettings() {
     const payload = {
         max_positions:      parseInt(document.getElementById('setting-max-positions').value, 10),
         risk_percentage:    parseFloat(document.getElementById('setting-risk-pct').value),
+        max_position_pct:   parseFloat(document.getElementById('setting-max-pos-pct').value),
         dashboard_password: pw,
         // Autonomous bot
         bot_autonomous:           document.getElementById('setting-bot-autonomous').checked ? 'true' : 'false',

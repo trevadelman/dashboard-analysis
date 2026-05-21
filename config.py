@@ -46,8 +46,9 @@ class Config:
         self.OLLAMA_MODEL    = get_setting("ai_model")
 
         # ── Risk management (from settings store) ─────────────────────────────
-        self.MAX_POSITIONS   = int(get_setting("max_positions") or "5")
-        self.RISK_PERCENTAGE = float(get_setting("risk_percentage") or "2.0")
+        self.MAX_POSITIONS    = int(get_setting("max_positions") or "5")
+        self.RISK_PERCENTAGE  = float(get_setting("risk_percentage") or "2.0")
+        self.MAX_POSITION_PCT = float(get_setting("max_position_pct") or "20.0")
 
         # ── Autonomous bot (settings store; .env is fallback for bootstrap) ──
         self.BOT_AUTONOMOUS = (

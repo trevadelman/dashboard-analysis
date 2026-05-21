@@ -161,6 +161,10 @@ async function runAnalysis() {
     const output = document.getElementById('analysis-results-content');
     window.currentSymbol = symbol;
 
+    // Compact the chart to half height so analysis results are visible without scrolling
+    document.getElementById('chart-container')?.classList.add('chart-compact');
+    if (window._chartInstance) window._chartInstance.applyOptions({ height: 250 });
+
     // Reset the consolidated AI commentary container
     const aiWrap = document.getElementById('analysis-ai-commentary');
     if (aiWrap) { aiWrap.innerHTML = ''; aiWrap.classList.add('hidden'); }
@@ -294,13 +298,21 @@ function openTradeModal(sig) {
     const equityEl = document.getElementById('equity');
     const equityStr = equityEl ? equityEl.textContent.replace(/[$,]/g, '') : '0';
     const equity    = parseFloat(equityStr) || 0;
-    const riskPct   = 0.01; // 1% default — matches bot default
-    if (equity > 0 && riskAmt > 0) {
-        const dollarRisk = equity * riskPct;
-        const qty        = Math.max(1, Math.floor(dollarRisk / riskAmt));
+    const riskPct        = parseFloat(window._appSettings?.risk_percentage  ?? 2.0);
+    const maxPositionPct = parseFloat(window._appSettings?.max_position_pct ?? 20.0);
+    if (equity > 0 && riskAmt > 0 && sig.entry_price > 0) {
+        // Constraint 1 — risk-based
+        const dollarRisk = equity * (riskPct / 100);
+        const riskBased  = Math.floor(dollarRisk / riskAmt);
+        // Constraint 2 — position value cap
+        const maxValue   = equity * (maxPositionPct / 100);
+        const capBased   = Math.floor(maxValue / sig.entry_price);
+        const qty        = Math.max(1, Math.min(riskBased, capBased));
         const totalRisk  = qty * riskAmt;
+        const totalValue = qty * sig.entry_price;
         document.getElementById('tm-qty').textContent        = `${qty} shares`;
-        document.getElementById('tm-dollar-risk').textContent = `~$${totalRisk.toFixed(0)} at risk (1% equity)`;
+        document.getElementById('tm-dollar-risk').textContent =
+            `~$${totalRisk.toFixed(0)} at risk (${riskPct}% equity) · $${totalValue.toFixed(0)} position value`;
     } else {
         document.getElementById('tm-qty').textContent        = '—';
         document.getElementById('tm-dollar-risk').textContent = 'Connect account for sizing';

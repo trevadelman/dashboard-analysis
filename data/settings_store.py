@@ -23,8 +23,9 @@ DEFAULTS: dict[str, Any] = {
     "ai_base_url":        "http://localhost:11434/v1",
     "ai_api_key":         "ollama",
     "ai_model":           "gemma3:4b-it-qat",
-    "max_positions":      "5",
-    "risk_percentage":    "2.0",
+    "max_positions":        "5",
+    "risk_percentage":      "2.0",
+    "max_position_pct":     "20.0",   # max % of equity in a single position
     # ── Autonomous bot ────────────────────────────────────────────────────────
     "bot_autonomous":           "false",
     "bot_scan_watchlist":       "sp500_top100",

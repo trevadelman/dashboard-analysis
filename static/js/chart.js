@@ -23,6 +23,8 @@ function initChart() {
     smaMedSeries   = chart.addLineSeries({ color: '#ff9800', lineWidth: 2, title: 'SMA 50', lastValueVisible: false, priceLineVisible: false });
     smaLongSeries  = chart.addLineSeries({ color: '#f44336', lineWidth: 2, title: 'SMA 200', lastValueVisible: false, priceLineVisible: false });
 
+    window._chartInstance = chart;
+
     window.addEventListener('resize', () => {
         chart.applyOptions({ width: chartContainer.clientWidth });
     });

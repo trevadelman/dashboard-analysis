@@ -63,8 +63,9 @@ class TradingBot:
         )
 
         # Risk management parameters
-        self.max_positions = config.MAX_POSITIONS
-        self.risk_percentage = config.RISK_PERCENTAGE
+        self.max_positions    = config.MAX_POSITIONS
+        self.risk_percentage  = config.RISK_PERCENTAGE
+        self.max_position_pct = config.MAX_POSITION_PCT
 
         logger.info(f"Trading bot initialized (paper={config.PAPER_TRADING})")
 
@@ -300,29 +301,38 @@ class TradingBot:
         """
         Calculate position size based on risk parameters.
 
+        Two constraints applied — the lesser of the two wins:
+          1. Risk-based: risk_pct% of equity divided by risk-per-share
+          2. Position cap: max_position_pct% of equity divided by entry price
+
+        This prevents tight stops from inflating share counts into
+        positions that are a multiple of account equity.
+
         Args:
             entry_price (float): Entry price
             stop_price (float): Stop loss price
 
         Returns:
-            int: Position size in shares
+            int: Position size in shares (minimum 1)
         """
         account = self.get_account()
-        equity = account.get('equity', 0)
+        equity  = account.get('equity', 0)
+        if equity <= 0 or entry_price <= 0:
+            return 1
 
-        # Calculate risk amount (2% of equity by default)
-        risk_amount = equity * (self.risk_percentage / 100)
-
-        # Calculate risk per share
+        # Constraint 1 — risk-based sizing
         risk_per_share = abs(entry_price - stop_price)
-
         if risk_per_share == 0:
-            # Default to 5% of equity if no stop loss
-            position_size = (equity * 0.05) / entry_price
+            risk_based = int((equity * 0.05) / entry_price)
         else:
-            position_size = risk_amount / risk_per_share
+            risk_amount = equity * (self.risk_percentage / 100)
+            risk_based  = int(risk_amount / risk_per_share)
 
-        return int(position_size)
+        # Constraint 2 — position value cap
+        max_position_value = equity * (self.max_position_pct / 100)
+        cap_based          = int(max_position_value / entry_price)
+
+        return max(1, min(risk_based, cap_based))
 
     def can_trade(self, symbol, side):
         """
