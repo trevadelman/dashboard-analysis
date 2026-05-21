@@ -162,6 +162,15 @@
                         </tr>
                     </tbody>
                 </table>
+
+                <!-- Show more button — hidden until there are more rows than _PAGE_SIZE -->
+                <div class="flex justify-center py-4">
+                    <button id="scan-show-more-btn"
+                            class="btn btn-sm btn-outline hidden"
+                            onclick="showMoreRows()">
+                        Show more
+                    </button>
+                </div>
             </div>
         </div>
     </div>

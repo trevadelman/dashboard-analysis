@@ -19,6 +19,12 @@ let _filterTimer = null;
 let _pendingRows = [];
 let _rafPending  = false;
 
+// Pagination — only render the first _PAGE_SIZE rows in the table.
+// The full dataset lives in scanResults[] for sort/filter/export.
+// Signals always go to the top so actionable rows are always visible.
+const _PAGE_SIZE = 200;
+let   _renderedCount = 0;   // how many rows are currently in the DOM
+
 function _flushPendingRows() {
     _rafPending = false;
     if (_pendingRows.length === 0) return;
@@ -34,12 +40,14 @@ function _flushPendingRows() {
 
     for (const r of _pendingRows) {
         if (!_matchesFilter(r)) continue;
+        if (_renderedCount >= _PAGE_SIZE && r.signal === 'NONE') continue;
         const row = _buildRow(r);
         if (r.signal !== 'NONE') {
             topFrag.appendChild(row);
         } else {
             bottomFrag.appendChild(row);
         }
+        _renderedCount++;
     }
 
     if (topFrag.childNodes.length > 0) {
@@ -48,6 +56,35 @@ function _flushPendingRows() {
     tbody.appendChild(bottomFrag);
 
     _pendingRows = [];
+    _updateShowMoreBtn();
+}
+
+function _updateShowMoreBtn() {
+    const btn = document.getElementById('scan-show-more-btn');
+    if (!btn) return;
+    const filtered = scanResults.filter(_matchesFilter);
+    const hidden   = filtered.length - _renderedCount;
+    if (hidden > 0) {
+        btn.textContent = `Show more (${hidden.toLocaleString()} remaining)`;
+        btn.classList.remove('hidden');
+    } else {
+        btn.classList.add('hidden');
+    }
+}
+
+function showMoreRows() {
+    const filtered = _sorted(scanResults.filter(_matchesFilter));
+    const nextBatch = filtered.slice(_renderedCount, _renderedCount + _PAGE_SIZE);
+    if (nextBatch.length === 0) return;
+
+    const tbody = document.getElementById('scan-results-body');
+    const frag  = document.createDocumentFragment();
+    for (const r of nextBatch) {
+        frag.appendChild(_buildRow(r));
+        _renderedCount++;
+    }
+    tbody.appendChild(frag);
+    _updateShowMoreBtn();
 }
 
 const LIST_LABELS = {
@@ -291,31 +328,22 @@ function _sorted(rows) {
 // ── Table rendering ───────────────────────────────────────────────────────────
 
 function renderAllRows() {
+    // Reset pagination counter and re-render the first page.
+    // Called on sort, filter, and cache load.
+    _renderedCount = 0;
     const tbody = document.getElementById('scan-results-body');
     tbody.innerHTML = '';
     const rows = _sorted(scanResults.filter(_matchesFilter));
     if (rows.length === 0) {
         tbody.innerHTML = '<tr><td colspan="12" class="text-center text-base-content/40 py-6 text-sm">No results match the current filter.</td></tr>';
+        _updateShowMoreBtn();
         return;
     }
-    rows.forEach(r => tbody.appendChild(_buildRow(r)));
-}
-
-function appendRow(r) {
-    // During live scan: insert signals at top, others at bottom.
-    // Respect active text filter — don't show rows that don't match.
-    if (!_matchesFilter(r)) return;
-
-    const tbody = document.getElementById('scan-results-body');
-    const placeholder = tbody.querySelector('td[colspan]');
-    if (placeholder) placeholder.closest('tr').remove();
-
-    const row = _buildRow(r);
-    if (r.signal !== 'NONE') {
-        tbody.insertBefore(row, tbody.firstChild);
-    } else {
-        tbody.appendChild(row);
-    }
+    const frag = document.createDocumentFragment();
+    const page = rows.slice(0, _PAGE_SIZE);
+    page.forEach(r => { frag.appendChild(_buildRow(r)); _renderedCount++; });
+    tbody.appendChild(frag);
+    _updateShowMoreBtn();
 }
 
 function _buildRow(r) {
@@ -478,12 +506,17 @@ function exportCSV() {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function resetUI() {
+    _renderedCount = 0;
+    _pendingRows   = [];
+    _rafPending    = false;
     document.getElementById('scan-stats').textContent = '';
     document.getElementById('scan-progress-bar').style.width = '0%';
     document.getElementById('scan-progress-wrap').classList.add('hidden');
     document.getElementById('scan-export-btn').classList.add('hidden');
     document.getElementById('scan-results-body').innerHTML =
         '<tr><td colspan="12" class="text-center text-base-content/40 py-6 text-sm">Run a scan to see results.</td></tr>';
+    const btn = document.getElementById('scan-show-more-btn');
+    if (btn) btn.classList.add('hidden');
 }
 
 function showScanStatus(type, msg) {
