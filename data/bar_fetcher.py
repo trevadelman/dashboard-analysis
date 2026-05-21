@@ -148,6 +148,11 @@ def fetch_equity_bars_batch(
     Fetch bars for a batch of equity symbols in a single Alpaca request.
 
     Returns a dict mapping symbol → DataFrame (empty DataFrame if no data).
+
+    Note: no limit= is set here. On multi-symbol requests, limit= is a *total*
+    row cap across all symbols combined — setting it to 10,000 silently truncates
+    results to the first ~15 symbols on 1h bars and ~12 on 15m bars.
+    The SDK handles pagination automatically when no limit is specified.
     """
     tf = build_timeframe(interval)
     start, end = build_date_range(period, extra_days)
@@ -158,7 +163,6 @@ def fetch_equity_bars_batch(
             timeframe=tf,
             start=start,
             end=end,
-            limit=10000,
             feed=DataFeed.IEX,
         )
         df = client.get_stock_bars(req).df
@@ -224,6 +228,9 @@ def fetch_crypto_bars_batch(
     Fetch bars for a batch of crypto symbols in a single Alpaca request.
 
     Returns a dict mapping symbol → DataFrame (empty DataFrame if no data).
+
+    Note: no limit= is set here for the same reason as fetch_equity_bars_batch —
+    limit= on multi-symbol requests is a total row cap that silently truncates.
     """
     tf = build_timeframe(interval)
     start, end = build_date_range(period, extra_days)
@@ -234,7 +241,6 @@ def fetch_crypto_bars_batch(
             timeframe=tf,
             start=start,
             end=end,
-            limit=10000,
         )
         df = client.get_crypto_bars(req).df
         if df is None or df.empty:
