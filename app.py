@@ -256,7 +256,7 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
         Verifies the credentials work before committing.
         """
         from alpaca.trading.client import TradingClient
-        from alpaca.data.historical import StockHistoricalDataClient
+        from alpaca.data.historical import StockHistoricalDataClient, CryptoHistoricalDataClient
 
         profile = activate_profile(profile_id)
         if not profile:
@@ -273,10 +273,15 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
                 api_key=profile["api_key"],
                 secret_key=profile["secret_key"],
             )
+            new_crypto = CryptoHistoricalDataClient(
+                api_key=profile["api_key"],
+                secret_key=profile["secret_key"],
+            )
             account = new_trading.get_account()
 
             bot.trading_client            = new_trading
             bot.data_client               = new_data
+            bot.crypto_client             = new_crypto
             bot.config.ALPACA_API_KEY     = profile["api_key"]
             bot.config.ALPACA_SECRET_KEY  = profile["secret_key"]
             bot.config.PAPER_TRADING      = paper
@@ -1466,6 +1471,7 @@ def create_app() -> FastAPI:
     if active and bot.trading_client is None:
         # Reconnect using the persisted active profile
         try:
+            from alpaca.data.historical import CryptoHistoricalDataClient
             paper = bool(active["paper_trading"])
             bot.trading_client = TradingClient(
                 api_key=active["api_key"],
@@ -1473,6 +1479,10 @@ def create_app() -> FastAPI:
                 paper=paper,
             )
             bot.data_client = StockHistoricalDataClient(
+                api_key=active["api_key"],
+                secret_key=active["secret_key"],
+            )
+            bot.crypto_client = CryptoHistoricalDataClient(
                 api_key=active["api_key"],
                 secret_key=active["secret_key"],
             )

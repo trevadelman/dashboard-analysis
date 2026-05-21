@@ -302,6 +302,8 @@ class MarketScanner:
 
         # Run Tier 1 + Tier 2 only (no AI for batch scanning)
         strategy = SignalHierarchy(ai_generator=None, timeframe=timeframe)
+        # Set _symbol so check_setup_and_trigger can apply the BTC/USD RS bypass.
+        strategy._symbol = symbol
 
         regime, tier1_details = strategy.check_market_regime(bars)
         tier1_passed = regime != "NO_TRADE"
