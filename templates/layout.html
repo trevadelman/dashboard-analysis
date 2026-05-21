@@ -30,6 +30,21 @@
         .help-prose li { margin-bottom: 0.2rem; }
         .help-prose .kv { display: flex; gap: 0.5rem; font-size: 0.78rem; margin-bottom: 0.2rem; }
         .help-prose .kv .k { font-weight: 600; min-width: 9rem; opacity: 0.7; }
+        /* Scroll-fade — fades out the bottom edge when more content is below */
+        .help-scroll-wrap { position: relative; }
+        .help-scroll-wrap::after {
+            content: '';
+            position: sticky;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            display: block;
+            height: 2.5rem;
+            background: linear-gradient(to bottom, transparent, oklch(var(--b1)));
+            pointer-events: none;
+            margin-top: -2.5rem;
+        }
+        .help-scroll-wrap.at-bottom::after { display: none; }
     </style>
     {% block head %}{% endblock %}
 </head>
@@ -56,8 +71,8 @@
                 <a role="tab" class="tab text-xs"             id="htab-backtest" onclick="switchHelpTab('backtest')">Backtest</a>
             </div>
 
-            <!-- Scrollable content area -->
-            <div class="overflow-y-auto flex-1 pr-1">
+            <!-- Scrollable content area with bottom fade indicator -->
+            <div id="help-scroll" class="overflow-y-auto flex-1 pr-1 help-scroll-wrap">
 
                 <!-- ── Overview ──────────────────────────────────────────── -->
                 <div id="hpanel-overview" class="help-prose">
@@ -225,7 +240,27 @@
             document.getElementById(`hpanel-${t}`).classList.toggle('hidden', t !== tab);
             document.getElementById(`htab-${t}`).classList.toggle('tab-active', t === tab);
         });
+        // Reset scroll to top and re-evaluate fade on tab switch
+        const el = document.getElementById('help-scroll');
+        if (el) { el.scrollTop = 0; _updateHelpFade(el); }
     }
+
+    function _updateHelpFade(el) {
+        const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 4;
+        el.classList.toggle('at-bottom', atBottom);
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const el = document.getElementById('help-scroll');
+        if (!el) return;
+        el.addEventListener('scroll', () => _updateHelpFade(el), { passive: true });
+        // Also re-evaluate when the modal opens
+        document.getElementById('help-modal').addEventListener('toggle', () => {
+            el.scrollTop = 0;
+            _updateHelpFade(el);
+        });
+        _updateHelpFade(el);
+    });
     </script>
 
     <!-- Settings modal -->
