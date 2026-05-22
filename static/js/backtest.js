@@ -128,17 +128,17 @@ function renderEquityCurve(data) {
     _btChart = LightweightCharts.createChart(container, {
         width:           container.clientWidth,
         height:          240,
-        layout:          { background: { type: 'solid', color: 'transparent' }, textColor: '#6b7280' },
-        grid:            { vertLines: { color: '#e5e7eb' }, horzLines: { color: '#e5e7eb' } },
+        layout:          { background: { type: 'solid', color: 'transparent' }, textColor: '#4A6355' },
+        grid:            { vertLines: { color: '#E4EBE6' }, horzLines: { color: '#E4EBE6' } },
         crosshair:       { mode: LightweightCharts.CrosshairMode.Normal },
-        rightPriceScale: { borderColor: '#d1d5db' },
-        timeScale:       { borderColor: '#d1d5db', timeVisible: true },
+        rightPriceScale: { borderColor: '#C8D5CB' },
+        timeScale:       { borderColor: '#C8D5CB', timeVisible: true },
         handleScroll:    true,
         handleScale:     true,
     });
 
     const lineSeries = _btChart.addLineSeries({
-        color:     '#2962ff',
+        color:     '#149960',
         lineWidth: 2,
         title:     'Cumulative R',
         lastValueVisible: true,

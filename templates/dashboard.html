@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Analysis Dashboard — Follow Through{% endblock %}
+{% block title %}Analysis Dashboard — Satellite{% endblock %}
 
 {% block head %}
 <style>
@@ -31,7 +31,7 @@
 
 {% block content %}
     <!-- Left Sidebar: Account Summary + Positions + Trades -->
-    <div class="sidebar bg-base-200 p-4 space-y-4">
+    <div class="sidebar bg-base-100 border-r border-base-300 p-4 space-y-4">
 
         <!-- Account Summary -->
         <div class="card bg-base-100 shadow-xl">
@@ -114,7 +114,7 @@
 {% block scripts %}
 <!-- Trade execution modal -->
 <dialog id="trade-modal" class="modal">
-    <div class="modal-box max-w-lg">
+    <div class="modal-box max-w-lg bg-base-100">
         <h3 class="font-bold text-lg mb-4 flex items-center gap-2">
             <i class="bi bi-lightning-fill text-success"></i>
             Review Trade

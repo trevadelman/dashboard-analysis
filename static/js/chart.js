@@ -6,22 +6,30 @@ let chart, candleSeries, smaShortSeries, smaMedSeries, smaLongSeries;
 
 function initChart() {
     const chartContainer = document.getElementById('chart-container');
+
+    // Read live CSS variable values so the chart always matches the current theme
+    const style      = getComputedStyle(document.documentElement);
+    const bgColor    = '#EEF2EE';   // --b1 page background
+    const textColor  = '#0F1F14';   // --bc primary text
+    const gridColor  = '#DDE6DF';   // Border Subtle
+    const borderColor = '#C8D8CB';  // Border Strong
+
     chart = LightweightCharts.createChart(chartContainer, {
-        layout: { backgroundColor: '#faf7f5', textColor: '#291334' },
-        grid: { vertLines: { color: '#e7e2df' }, horzLines: { color: '#e7e2df' } },
+        layout: { backgroundColor: bgColor, textColor: textColor },
+        grid: { vertLines: { color: gridColor }, horzLines: { color: gridColor } },
         crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-        rightPriceScale: { borderColor: '#d1ccc8' },
-        timeScale: { borderColor: '#d1ccc8' },
+        rightPriceScale: { borderColor: borderColor },
+        timeScale: { borderColor: borderColor },
     });
 
     candleSeries = chart.addCandlestickSeries({
-        upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
-        wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+        upColor: '#0D9B55', downColor: '#D63B3B', borderVisible: false,
+        wickUpColor: '#0D9B55', wickDownColor: '#D63B3B',
     });
 
-    smaShortSeries = chart.addLineSeries({ color: '#2962ff', lineWidth: 2, title: 'SMA 20', lastValueVisible: false, priceLineVisible: false });
-    smaMedSeries   = chart.addLineSeries({ color: '#ff9800', lineWidth: 2, title: 'SMA 50', lastValueVisible: false, priceLineVisible: false });
-    smaLongSeries  = chart.addLineSeries({ color: '#f44336', lineWidth: 2, title: 'SMA 200', lastValueVisible: false, priceLineVisible: false });
+    smaShortSeries = chart.addLineSeries({ color: '#149960', lineWidth: 2, title: 'EMA 9',   lastValueVisible: false, priceLineVisible: false });
+    smaMedSeries   = chart.addLineSeries({ color: '#4DCE99', lineWidth: 2, title: 'EMA 21',  lastValueVisible: false, priceLineVisible: false });
+    smaLongSeries  = chart.addLineSeries({ color: '#8AA394', lineWidth: 2, title: 'EMA 50',  lastValueVisible: false, priceLineVisible: false });
 
     window._chartInstance = chart;
 

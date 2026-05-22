@@ -114,19 +114,19 @@ async function initPositionChart(symbol, containerId, levels) {
         const chart = LightweightCharts.createChart(container, {
             width:           container.clientWidth,
             height:          200,
-            layout:          { backgroundColor: 'transparent', textColor: '#6b7280' },
-            grid:            { vertLines: { color: '#e5e7eb' }, horzLines: { color: '#e5e7eb' } },
+            layout:          { backgroundColor: 'transparent', textColor: '#4A6355' },
+            grid:            { vertLines: { color: '#E4EBE6' }, horzLines: { color: '#E4EBE6' } },
             crosshair:       { mode: LightweightCharts.CrosshairMode.Normal },
-            rightPriceScale: { borderColor: '#d1d5db' },
-            timeScale:       { borderColor: '#d1d5db', timeVisible: true },
+            rightPriceScale: { borderColor: '#C8D5CB' },
+            timeScale:       { borderColor: '#C8D5CB', timeVisible: true },
             handleScroll:    true,
             handleScale:     true,
         });
 
         const candleSeries = chart.addCandlestickSeries({
-            upColor: '#26a69a', downColor: '#ef5350',
+            upColor: '#0D9B55', downColor: '#D63B3B',
             borderVisible: false,
-            wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+            wickUpColor: '#0D9B55', wickDownColor: '#D63B3B',
         });
 
         const toSec = d => typeof d.timestamp === 'number'
@@ -139,11 +139,11 @@ async function initPositionChart(symbol, containerId, levels) {
 
         candleSeries.setData(candles);
 
-        // Entry price line (green dashed)
+        // Entry price line (Signal Green dashed)
         if (levels.entry) {
             candleSeries.createPriceLine({
                 price:     levels.entry,
-                color:     '#22c55e',
+                color:     '#0D9B55',
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
                 axisLabelVisible: true,
@@ -151,11 +151,11 @@ async function initPositionChart(symbol, containerId, levels) {
             });
         }
 
-        // Stop loss price line (red dashed)
+        // Stop loss price line (Loss Red dashed)
         if (levels.stop) {
             candleSeries.createPriceLine({
                 price:     levels.stop,
-                color:     '#ef4444',
+                color:     '#D63B3B',
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
                 axisLabelVisible: true,
@@ -163,11 +163,11 @@ async function initPositionChart(symbol, containerId, levels) {
             });
         }
 
-        // Take profit price line (teal dashed)
+        // Take profit price line (Teal Signal dashed)
         if (levels.target) {
             candleSeries.createPriceLine({
                 price:     levels.target,
-                color:     '#14b8a6',
+                color:     '#0E9E8A',
                 lineWidth: 1,
                 lineStyle: LightweightCharts.LineStyle.Dashed,
                 axisLabelVisible: true,
@@ -295,7 +295,7 @@ function buildPositionCard(p, orders, expanded) {
                         ${(() => {
                             const targetOrder = orders.find(o => o.type === 'limit' && o.side === 'sell' && o.limit_price);
                             return targetOrder ? `<span class="flex items-center gap-1.5">
-                                <span class="inline-block w-5 border-t-2 border-dashed" style="border-color: #14b8a6;"></span>
+                                <span class="inline-block w-5 border-t-2 border-dashed" style="border-color: #0E9E8A;"></span>
                                 Target $${targetOrder.limit_price.toFixed(2)}
                                </span>` : '';
                         })()}
@@ -488,11 +488,11 @@ async function loadPositions() {
 // ── Position Review ───────────────────────────────────────────────────────────
 
 const VERDICT_CONFIG = {
-    HOLD:           { badge: 'badge-success',  icon: 'bi-check-circle-fill',   label: 'HOLD',           color: '#22c55e' },
-    TRAIL_STOP:     { badge: 'badge-warning',  icon: 'bi-arrow-up-circle-fill', label: 'TRAIL STOP',     color: '#f59e0b' },
-    RAISE_TARGET:   { badge: 'badge-info',     icon: 'bi-graph-up-arrow',       label: 'RAISE TARGET',   color: '#3b82f6' },
-    PARTIAL_PROFIT: { badge: 'badge-warning',  icon: 'bi-pie-chart-fill',       label: 'PARTIAL PROFIT', color: '#f59e0b' },
-    EXIT:           { badge: 'badge-error',    icon: 'bi-x-circle-fill',        label: 'EXIT',           color: '#ef4444' },
+    HOLD:           { badge: 'badge-success',  icon: 'bi-check-circle-fill',   label: 'HOLD',           color: '#0D9B55' },
+    TRAIL_STOP:     { badge: 'badge-warning',  icon: 'bi-arrow-up-circle-fill', label: 'TRAIL STOP',     color: '#C47D0A' },
+    RAISE_TARGET:   { badge: 'badge-info',     icon: 'bi-graph-up-arrow',       label: 'RAISE TARGET',   color: '#0E9E8A' },
+    PARTIAL_PROFIT: { badge: 'badge-warning',  icon: 'bi-pie-chart-fill',       label: 'PARTIAL PROFIT', color: '#C47D0A' },
+    EXIT:           { badge: 'badge-error',    icon: 'bi-x-circle-fill',        label: 'EXIT',           color: '#D63B3B' },
 };
 
 async function runPositionReview(symbol) {

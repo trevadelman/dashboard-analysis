@@ -111,9 +111,9 @@ function _buildRow(e) {
 
 function _gradeBadge(grade) {
     if (!grade || grade === '—') return '<span class="text-base-content/30 text-xs">—</span>';
-    const cls = grade === 'A' ? 'badge-success' :
-                grade === 'B' ? 'badge-warning'  :
-                grade === 'C' ? 'badge-info'     : 'badge-ghost';
+    if (grade === 'A') return `<span class="badge badge-xs badge-grade-a border">${grade}</span>`;
+    const cls = grade === 'B' ? 'badge-warning' :
+                grade === 'C' ? 'badge-info'    : 'badge-ghost';
     return `<span class="badge badge-xs ${cls}">${grade}</span>`;
 }
 

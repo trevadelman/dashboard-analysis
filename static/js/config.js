@@ -40,13 +40,18 @@ async function updateConfig() {
     const config = {};
     inputs.forEach(i => config[i.dataset.key] = parseFloat(i.value));
 
+    const statusEl = document.getElementById('config-save-status');
     const response = await fetch('/api/config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
     });
     if (response.ok) {
-        alert('Configuration updated successfully!');
+        if (statusEl) {
+            statusEl.textContent = '✓ Saved';
+            statusEl.className = 'text-xs text-success';
+            setTimeout(() => { statusEl.textContent = ''; }, 2000);
+        }
         loadChart();
     }
 }

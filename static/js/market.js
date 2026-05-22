@@ -205,7 +205,7 @@ function signalRow(r) {
             <td class="text-xs text-base-content/50">${tfLabel}</td>
             <td><span class="badge ${sigCls} badge-sm">${r.signal}</span></td>
             <td class="font-semibold">${r.score ?? '—'}</td>
-            <td class="text-base-content/70">${r.grade ?? '—'}</td>
+            <td>${_gradeBadge(r.grade)}</td>
             <td class="${rsCls}">${rsStr}</td>
             <td>${r.rvol != null ? r.rvol + 'x' : '—'}</td>
             <td>${r.bb_width_pct != null ? r.bb_width_pct + '%' : '—'}</td>
@@ -273,7 +273,7 @@ function setupRow(r, rank) {
             <td class="font-mono font-semibold text-sm">${r.symbol}</td>
             <td><span class="badge ${sigCls} badge-sm">${sigLabel}</span></td>
             <td class="font-semibold">${r.score ?? '—'}</td>
-            <td class="text-base-content/70">${r.grade ?? '—'}</td>
+            <td>${_gradeBadge(r.grade)}</td>
             <td class="text-xs text-base-content/50">${r.regime ?? '—'}</td>
             <td class="${rsCls}">${rsStr}</td>
             <td>${r.rvol != null ? r.rvol + 'x' : '—'}</td>
@@ -332,7 +332,7 @@ function buildReportCard(d, tf) {
                     ${['A','B','C','D'].map(g => {
                         const cnt = gd[g] || 0;
                         const pct = d.total ? Math.round(cnt / d.total * 100) : 0;
-                        const barCls = g === 'A' ? 'progress-success' : g === 'B' ? 'progress-info' : g === 'C' ? 'progress-warning' : 'progress-error';
+                        const barCls = g === 'A' ? 'progress-warning' : g === 'B' ? 'progress-info' : g === 'C' ? 'progress-success' : 'progress-ghost';
                         return `<div class="flex items-center gap-2 text-xs">
                             <span class="w-4 shrink-0 font-bold">${g}</span>
                             <progress class="progress ${barCls} flex-1 h-2 min-w-0" value="${pct}" max="100"></progress>
@@ -420,6 +420,16 @@ function streamAiCommentary() {
         badge.className   = 'badge badge-error badge-sm';
         badge.textContent = 'Stream failed';
     };
+}
+
+// ── Grade badge ───────────────────────────────────────────────────────────────
+
+function _gradeBadge(grade) {
+    if (!grade || grade === '—') return '<span class="text-base-content/30 text-xs">—</span>';
+    if (grade === 'A') return `<span class="badge badge-xs badge-grade-a border">${grade}</span>`;
+    const cls = grade === 'B' ? 'badge-warning' :
+                grade === 'C' ? 'badge-info'    : 'badge-ghost';
+    return `<span class="badge badge-xs ${cls}">${grade}</span>`;
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

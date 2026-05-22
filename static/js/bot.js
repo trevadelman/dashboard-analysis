@@ -57,7 +57,8 @@ async function loadBotStatus() {
         }).join('');
 
         container.innerHTML = `
-            <div class="bg-base-100 border border-base-300 rounded-xl p-4">
+            <div class="card bg-base-100 shadow-xl">
+            <div class="card-body p-4">
                 <div class="flex flex-wrap gap-2 mb-4">
                     ${runBadge} ${haltBadge} ${autoBadge}
                     <span class="text-xs text-base-content/60 ml-auto">Today's actions: <strong>${status.today_actions || 0}</strong></span>
@@ -74,7 +75,7 @@ async function loadBotStatus() {
                         <tbody>${jobRows}</tbody>
                     </table>
                 </div>` : '<p class="text-xs text-base-content/50">No jobs registered</p>'}
-            </div>`;
+            </div></div>`;
 
     } catch (err) {
         container.innerHTML = `<div class="alert alert-error text-sm"><span>Failed to load bot status: ${err.message}</span></div>`;
