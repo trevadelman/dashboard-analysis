@@ -260,10 +260,23 @@ async function runAnalysis() {
             }
 
             // Build the watchlist snapshot from the accumulated done events.
-            // Prefer the 'long' timeframe; fall back to whichever is available.
             const tfDone = window._tfDoneEvents || {};
             const primary = tfDone['long'] || tfDone['swing'] || tfDone['short'] || {};
             const firstSig = (event.signals && event.signals.length > 0) ? event.signals[0] : null;
+
+            // Build slash-lined score string: "long/swing/short" e.g. "72/58/41"
+            const scores = event.scores || {};
+            const scoreStr = ['long', 'swing', 'short']
+                .map(tf => scores[tf] != null ? scores[tf] : '—')
+                .join('/');
+
+            // Best grade across timeframes (A > B > C > D > —)
+            const grades = event.grades || {};
+            const gradeOrder = ['A', 'B', 'C', 'D'];
+            const bestGrade = gradeOrder.find(g =>
+                Object.values(grades).includes(g)
+            ) || null;
+
             _onAnalysisComplete({
                 symbol:    symbol,
                 timeframe: primary.timeframe || 'long',
@@ -272,8 +285,8 @@ async function runAnalysis() {
                 tier1:     primary.regime    || null,
                 tier2:     firstSig ? 'PASS' : null,
                 signal:    firstSig ? firstSig.side.toUpperCase() : 'NONE',
-                score:     null,   // not available from stream; scan cache has it
-                grade:     null,
+                score:     scoreStr,
+                grade:     bestGrade,
             });
             window._tfDoneEvents = {};
 

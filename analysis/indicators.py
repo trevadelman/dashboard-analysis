@@ -210,5 +210,5 @@ class TechnicalIndicators:
         else:
             df['rs_vs_spy_20'] = np.nan
 
-        logger.info("Calculated all technical indicators")
+        logger.debug("Calculated all technical indicators")
         return df

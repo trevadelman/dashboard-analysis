@@ -50,10 +50,8 @@ function _buildRow(e) {
         ? addedDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
         : '';
 
-    const tfLabel = { long: 'Daily', swing: 'Hourly', short: '15m' }[e.timeframe] || e.timeframe;
-
-    const priceAtAdd    = e.price_at_add    != null ? `$${Number(e.price_at_add).toFixed(2)}`    : '—';
-    const currentPrice  = e.current_price   != null ? `$${Number(e.current_price).toFixed(2)}`   : '—';
+    const priceAtAdd   = e.price_at_add   != null ? `$${Number(e.price_at_add).toFixed(2)}`   : '—';
+    const currentPrice = e.current_price  != null ? `$${Number(e.current_price).toFixed(2)}`  : '—';
 
     // Price change since add
     let deltaPct = '—';
@@ -64,17 +62,13 @@ function _buildRow(e) {
         deltaClass = pct >= 0 ? 'text-success font-semibold' : 'text-error font-semibold';
     }
 
-    const scoreAtAdd   = e.score_at_add   != null ? e.score_at_add   : '—';
+    const scoreAtAdd   = e.score_at_add   != null ? `<span class="font-mono">${e.score_at_add}</span>`   : '<span class="text-base-content/30">—</span>';
     const gradeAtAdd   = e.grade_at_add   ? _gradeBadge(e.grade_at_add)   : '<span class="text-base-content/30">—</span>';
     const signalAtAdd  = e.signal_at_add  ? _signalBadge(e.signal_at_add) : '<span class="text-base-content/30">—</span>';
 
-    const currentScore  = e.current_score  != null ? e.current_score  : '—';
+    const currentScore  = e.current_score  != null ? `<span class="font-mono">${e.current_score}</span>`  : '<span class="text-base-content/30">—</span>';
     const currentGrade  = e.current_grade  ? _gradeBadge(e.current_grade)  : '<span class="text-base-content/30">—</span>';
     const currentSignal = e.current_signal ? _signalBadge(e.current_signal) : '<span class="text-base-content/30">—</span>';
-
-    const tier1Badge = e.tier1_at_add
-        ? `<span class="badge badge-xs ${e.tier1_at_add === 'BULLISH' ? 'badge-success' : e.tier1_at_add === 'BEARISH' ? 'badge-error' : 'badge-ghost'}">${e.tier1_at_add}</span>`
-        : '<span class="text-base-content/30 text-xs">—</span>';
 
     const notesId = `wl-notes-${e.id}`;
 
@@ -87,13 +81,13 @@ function _buildRow(e) {
             <div>${addedStr}</div>
             <div class="text-base-content/40">${addedTime}</div>
         </td>
-        <td class="text-xs">${tfLabel}</td>
-        <td class="text-xs">${tier1Badge}</td>
-        <td class="text-xs text-right">${priceAtAdd}</td>
-        <td class="text-xs text-right font-semibold">${scoreAtAdd}</td>
+        <!-- Snapshot @ Add -->
+        <td class="text-xs text-right border-l border-base-300">${priceAtAdd}</td>
+        <td class="text-xs text-right">${scoreAtAdd}</td>
         <td class="text-xs">${gradeAtAdd}</td>
         <td class="text-xs">${signalAtAdd}</td>
-        <td class="text-xs text-right">${currentPrice}</td>
+        <!-- Current -->
+        <td class="text-xs text-right border-l border-base-300">${currentPrice}</td>
         <td class="text-xs text-right ${deltaClass}">${deltaPct}</td>
         <td class="text-xs text-right">${currentScore}</td>
         <td class="text-xs">${currentGrade}</td>

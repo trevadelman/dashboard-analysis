@@ -673,9 +673,12 @@ class TradingBot:
             results[tf_name] = tf_result
 
         # Compute overall verdict from the three done events
+        from screeners.market_scanner import MarketScanner as _MS
         verdicts = []
         all_signals = []
         all_audits  = {}
+        tf_scores   = {}
+        tf_grades   = {}
         for tf_name in ('long', 'swing', 'short'):
             r = results.get(tf_name)
             if r is None:
@@ -691,6 +694,36 @@ class TradingBot:
                 verdicts.append('NO_ENTRY')
             if r:
                 all_audits[tf_name] = r.get('audit', [])
+
+            # Score this timeframe using the same scorer as the scanner.
+            # Pull indicator values from the last bar of the fetched data.
+            data_tf = fetched.get((tf_name, 'symbol'), pd.DataFrame())
+            if not data_tf.empty:
+                latest = data_tf.iloc[-1]
+                def _safe(col):
+                    v = latest.get(col)
+                    return None if v is None or (isinstance(v, float) and pd.isna(v)) else float(v)
+                import math as _math
+                rs_raw = _safe('rs_vs_spy_20')
+                atr_14 = _safe('atr_14')
+                atr_50_series = data_tf['atr_14'].rolling(50).mean().iloc[-1] if 'atr_14' in data_tf.columns else None
+                atr_ratio = None
+                if atr_14 and atr_50_series and not _math.isnan(atr_50_series) and atr_50_series > 0:
+                    atr_ratio = round(atr_14 / float(atr_50_series), 3)
+                verdict_for_tf = verdicts[-1] if verdicts else 'NO_ENTRY'
+                signal_str = 'BUY' if verdict_for_tf == 'SIGNAL' and r and r.get('signals') and r['signals'][0].get('side') == 'buy' else \
+                             'SELL' if verdict_for_tf == 'SIGNAL' and r and r.get('signals') and r['signals'][0].get('side') == 'sell' else 'NONE'
+                sc, gr = _MS._score_setup(
+                    signal=signal_str,
+                    bb_width_pct=_safe('bb_width_pct'),
+                    rs_vs_spy=rs_raw,
+                    rvol=_safe('rvol_20'),
+                    rsi=_safe('rsi_14'),
+                    regime=r.get('regime', 'NO_TRADE') if r else 'NO_TRADE',
+                    atr_ratio=atr_ratio,
+                )
+                tf_scores[tf_name] = sc
+                tf_grades[tf_name] = gr
 
         signal_count = verdicts.count('SIGNAL')
         if signal_count == 3:
@@ -712,6 +745,8 @@ class TradingBot:
                 'short': verdicts[2] if len(verdicts) > 2 else 'ERROR',
             },
             'signals': all_signals,
+            'scores': tf_scores,
+            'grades': tf_grades,
             'timestamp': datetime.now().isoformat(),
         }, default=str)
         yield f"data: {summary_payload}\n\n"

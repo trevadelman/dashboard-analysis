@@ -57,7 +57,7 @@ def add(
     symbol: str,
     timeframe: str,
     price_at_add: Optional[float] = None,
-    score_at_add: Optional[int] = None,
+    score_at_add: Optional[str] = None,
     grade_at_add: Optional[str] = None,
     signal_at_add: Optional[str] = None,
     tier1_at_add: Optional[str] = None,

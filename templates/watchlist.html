@@ -13,8 +13,8 @@
                 Watchlist
             </h1>
             <p class="text-sm text-base-content/60 mt-1">
-                Setups you're tracking. Snapshot scores are frozen at the time you added them —
-                current scores pull from the latest scan cache.
+                Setups you're tracking. Snapshot is frozen at the time you added them —
+                current data pulls from the latest scan cache.
             </p>
         </div>
         <div class="flex items-center gap-3">
@@ -37,27 +37,42 @@
                         <tr class="bg-base-200 text-xs">
                             <th>Symbol</th>
                             <th>Added</th>
-                            <th>TF</th>
-                            <th>Regime @ Add</th>
-                            <!-- Snapshot columns -->
-                            <th class="text-right border-l border-base-300">Price @ Add</th>
-                            <th class="text-right">Score @ Add</th>
-                            <th>Grade @ Add</th>
-                            <th>Signal @ Add</th>
-                            <!-- Current columns -->
-                            <th class="text-right border-l border-base-300">Current Price</th>
+                            <!-- Snapshot @ Add -->
+                            <th class="border-l border-base-300 text-right">Price @ Add</th>
+                            <th class="text-center" colspan="3">
+                                <span class="text-base-content/50">— Snapshot @ Add —</span>
+                            </th>
+                            <!-- Current -->
+                            <th class="border-l border-base-300 text-right">Current Price</th>
                             <th class="text-right">Δ%</th>
-                            <th class="text-right">Current Score</th>
-                            <th>Current Grade</th>
-                            <th>Current Signal</th>
+                            <th class="text-center" colspan="3">
+                                <span class="text-base-content/50">— Current (from scan cache) —</span>
+                            </th>
                             <!-- Notes + actions -->
                             <th>Notes</th>
+                            <th></th>
+                        </tr>
+                        <tr class="bg-base-200 text-xs border-t border-base-300">
+                            <th></th>
+                            <th></th>
+                            <!-- Snapshot sub-headers -->
+                            <th class="border-l border-base-300 text-right"></th>
+                            <th class="text-right">Score<br><span class="font-normal text-base-content/40">L/S/15m</span></th>
+                            <th>Grade</th>
+                            <th>Signal</th>
+                            <!-- Current sub-headers -->
+                            <th class="border-l border-base-300 text-right"></th>
+                            <th></th>
+                            <th class="text-right">Score<br><span class="font-normal text-base-content/40">L/S/15m</span></th>
+                            <th>Grade</th>
+                            <th>Signal</th>
+                            <th></th>
                             <th></th>
                         </tr>
                     </thead>
                     <tbody id="wl-body">
                         <tr>
-                            <td colspan="15" class="text-center py-10 text-base-content/40 text-sm">
+                            <td colspan="13" class="text-center py-10 text-base-content/40 text-sm">
                                 Loading…
                             </td>
                         </tr>
@@ -67,8 +82,9 @@
 
             <!-- Column legend -->
             <div class="px-4 py-3 border-t border-base-200 flex flex-wrap gap-4 text-xs text-base-content/50">
-                <span><strong class="text-base-content/70">Score @ Add / Grade @ Add / Signal @ Add</strong> — frozen snapshot when you added the symbol</span>
-                <span><strong class="text-base-content/70">Current Score / Grade / Signal</strong> — from the latest scan cache (run a scan to refresh)</span>
+                <span><strong class="text-base-content/70">Score L/S/15m</strong> — composite score per timeframe (Long / Swing / Short)</span>
+                <span><strong class="text-base-content/70">Grade</strong> — best grade across all three timeframes (A ≥ 80, B ≥ 60, C ≥ 40, D &lt; 40)</span>
+                <span><strong class="text-base-content/70">Signal</strong> — BUY/SELL if any timeframe triggered, NONE otherwise</span>
                 <span><strong class="text-base-content/70">Δ%</strong> — price change since you added it</span>
             </div>
         </div>

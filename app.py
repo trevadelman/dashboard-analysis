@@ -1505,19 +1505,42 @@ Rules: Use markdown headers. Be direct. Use actual numbers from the data. No dis
         enriched = []
         for e in entries:
             row = dict(e)
-            tf  = e.get("timeframe", "long")
             sym = e.get("symbol", "")
-            cached = cache_by_tf.get(tf, {}).get(sym)
-            if cached:
-                row["current_score"]  = cached.get("score")
-                row["current_grade"]  = cached.get("grade")
-                row["current_signal"] = cached.get("signal")
-                row["current_price"]  = cached.get("price")
-            else:
-                row["current_score"]  = None
-                row["current_grade"]  = None
-                row["current_signal"] = None
-                row["current_price"]  = None
+
+            # Build slash-lined current score across all three timeframes.
+            # Each timeframe's scan cache entry has its own score/grade/signal.
+            tf_score_parts = []
+            best_grade     = None
+            best_signal    = None
+            current_price  = None
+            grade_order    = ["A", "B", "C", "D"]
+
+            for tf in ("long", "swing", "short"):
+                cached = cache_by_tf.get(tf, {}).get(sym)
+                if cached:
+                    sc = cached.get("score")
+                    tf_score_parts.append(str(sc) if sc is not None else "—")
+                    # Best grade across timeframes
+                    gr = cached.get("grade")
+                    if gr and gr in grade_order:
+                        if best_grade is None or grade_order.index(gr) < grade_order.index(best_grade):
+                            best_grade = gr
+                    # Signal: prefer BUY/SELL over NONE
+                    sig = cached.get("signal")
+                    if sig and sig != "NONE" and best_signal is None:
+                        best_signal = sig
+                    # Price from the primary timeframe (long preferred)
+                    if tf == "long" and cached.get("price") is not None:
+                        current_price = cached.get("price")
+                    elif current_price is None and cached.get("price") is not None:
+                        current_price = cached.get("price")
+                else:
+                    tf_score_parts.append("—")
+
+            row["current_score"]  = "/".join(tf_score_parts) if any(p != "—" for p in tf_score_parts) else None
+            row["current_grade"]  = best_grade
+            row["current_signal"] = best_signal or "NONE"
+            row["current_price"]  = current_price
             enriched.append(row)
 
         return enriched
