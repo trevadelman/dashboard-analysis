@@ -90,6 +90,52 @@
         </div>
     </div>
 
+    <!-- High-Quality Setups (Score ≥ 85, No Signal) -->
+    <details id="alerts-section" class="mt-6" ontoggle="onAlertsToggle(this)">
+        <summary class="cursor-pointer select-none flex items-center gap-2 text-sm font-semibold text-base-content/70 hover:text-base-content transition-colors">
+            <i class="bi bi-stars text-warning"></i>
+            High-Quality Setups (Score ≥ 85, No Signal)
+            <span id="alerts-count" class="badge badge-sm badge-warning badge-outline ml-1">…</span>
+            <i class="bi bi-chevron-down text-xs ml-auto transition-transform" id="alerts-chevron"></i>
+        </summary>
+        <div class="card bg-base-100 shadow-xl mt-3">
+            <div class="card-body p-0">
+                <div class="overflow-x-auto">
+                    <table class="table table-sm table-zebra w-full">
+                        <thead>
+                            <tr class="bg-base-200 text-xs">
+                                <th>Time</th>
+                                <th>Symbol</th>
+                                <th>TF</th>
+                                <th class="text-right">Score</th>
+                                <th>Regime</th>
+                                <th class="text-right">RS vs SPY</th>
+                                <th class="text-right">RVOL</th>
+                                <th class="text-right">BB Width%</th>
+                                <th class="text-right">RSI</th>
+                                <th class="text-right">Price</th>
+                                <th>Blocked At</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alerts-body">
+                            <tr><td colspan="11" class="text-center py-6 text-base-content/40 text-sm">Open to load…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <!-- Pagination -->
+                <div id="alerts-pagination" class="px-4 py-3 border-t border-base-200 flex items-center gap-3 text-xs text-base-content/60 hidden">
+                    <button id="alerts-prev" class="btn btn-xs btn-ghost" onclick="alertsPage(-1)">‹ Prev</button>
+                    <span id="alerts-page-info"></span>
+                    <button id="alerts-next" class="btn btn-xs btn-ghost" onclick="alertsPage(1)">Next ›</button>
+                </div>
+                <div class="px-4 py-3 border-t border-base-200 text-xs text-base-content/50">
+                    Logged whenever the scanner scores a swing or short timeframe symbol at 85+ with no signal.
+                    Tracks how long a setup stays compressed before (or without) triggering.
+                </div>
+            </div>
+        </div>
+    </details>
+
 </div>
 {% endblock %}
 

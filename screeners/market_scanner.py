@@ -385,7 +385,7 @@ class MarketScanner:
             atr_ratio=atr_ratio,
         )
 
-        return {
+        result = {
             "symbol":       symbol,
             "price":        price,
             "regime":       regime,
@@ -401,6 +401,28 @@ class MarketScanner:
             "tier1_reason": tier1_reason,
             "tier2_reason": tier2_reason,
         }
+
+        # Log high-quality setups that haven't triggered yet (swing/short, score ≥ 85, no signal).
+        # No dedup — we want to see how long a symbol stays in this state across scan cycles.
+        if timeframe in ("swing", "short") and score >= 85 and signal == "NONE":
+            try:
+                from data.high_quality_setups import append_setup
+                append_setup({
+                    "symbol":       symbol,
+                    "timeframe":    timeframe,
+                    "score":        score,
+                    "regime":       regime,
+                    "rs_vs_spy":    rs_vs_spy,
+                    "rvol":         rvol,
+                    "bb_width_pct": bb_width_pct,
+                    "rsi":          rsi,
+                    "price":        price,
+                    "blocked_at":   tier2_reason or tier1_reason,
+                })
+            except Exception as e:
+                logger.warning(f"[scanner] Could not log high-quality setup for {symbol}: {e}")
+
+        return result
 
     @staticmethod
     def _score_setup(

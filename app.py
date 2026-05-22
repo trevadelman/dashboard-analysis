@@ -1586,6 +1586,23 @@ Rules: Use markdown headers. Be direct. Use actual numbers from the data. No dis
             return JSONResponse({"error": "Entry not found"}, status_code=404)
         return entry
 
+    # ── High-quality setup alerts ─────────────────────────────────────────────
+
+    @app.get("/api/alerts")
+    async def api_alerts(
+        request: Request,
+        limit: int = 100,
+        _=Depends(login_required),
+    ):
+        """
+        Return the most recent high-quality setup log entries (score ≥ 85,
+        swing/short timeframe, no signal fired yet).
+
+        Entries are returned newest-first, capped at `limit` (default 100).
+        """
+        from data.high_quality_setups import load as hqs_load
+        return hqs_load(limit=limit)
+
     return app
 
 

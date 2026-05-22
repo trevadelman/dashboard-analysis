@@ -187,6 +187,133 @@ function showStatus(type, msg) {
     setTimeout(() => { el.innerHTML = ''; }, 4000);
 }
 
+// ── High-Quality Setups (Alerts) ──────────────────────────────────────────────
+
+let _alertsData    = [];
+let _alertsPage    = 0;
+const _ALERTS_PAGE_SIZE = 10;
+let _alertsLoaded  = false;
+
+async function loadAlerts() {
+    const tbody = document.getElementById('alerts-body');
+    tbody.innerHTML = '<tr><td colspan="11" class="text-center py-6 text-base-content/40 text-sm"><span class="loading loading-spinner loading-sm mr-2"></span>Loading…</td></tr>';
+
+    try {
+        const res  = await fetch('/api/alerts?limit=100');
+        const data = await res.json();
+        _alertsData   = Array.isArray(data) ? data : [];
+        _alertsPage   = 0;
+        _alertsLoaded = true;
+
+        const countEl = document.getElementById('alerts-count');
+        if (countEl) countEl.textContent = _alertsData.length;
+
+        _renderAlerts();
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="11" class="text-center py-6 text-error text-sm">Failed to load: ${e.message}</td></tr>`;
+    }
+}
+
+function _renderAlerts() {
+    const tbody    = document.getElementById('alerts-body');
+    const pagDiv   = document.getElementById('alerts-pagination');
+    const pageInfo = document.getElementById('alerts-page-info');
+    const prevBtn  = document.getElementById('alerts-prev');
+    const nextBtn  = document.getElementById('alerts-next');
+
+    if (_alertsData.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="11" class="text-center py-6 text-base-content/40 text-sm">No high-quality setups logged yet. Run a swing or short scan to start building the log.</td></tr>';
+        if (pagDiv) pagDiv.classList.add('hidden');
+        return;
+    }
+
+    const totalPages = Math.ceil(_alertsData.length / _ALERTS_PAGE_SIZE);
+    const start      = _alertsPage * _ALERTS_PAGE_SIZE;
+    const pageRows   = _alertsData.slice(start, start + _ALERTS_PAGE_SIZE);
+
+    tbody.innerHTML = '';
+    const frag = document.createDocumentFragment();
+    pageRows.forEach(e => frag.appendChild(_buildAlertRow(e)));
+    tbody.appendChild(frag);
+
+    if (pagDiv) {
+        if (totalPages > 1) {
+            pagDiv.classList.remove('hidden');
+            if (pageInfo) pageInfo.textContent = `Page ${_alertsPage + 1} of ${totalPages} (${_alertsData.length} entries)`;
+            if (prevBtn)  prevBtn.disabled = _alertsPage === 0;
+            if (nextBtn)  nextBtn.disabled = _alertsPage >= totalPages - 1;
+        } else {
+            pagDiv.classList.add('hidden');
+        }
+    }
+}
+
+function alertsPage(delta) {
+    const totalPages = Math.ceil(_alertsData.length / _ALERTS_PAGE_SIZE);
+    _alertsPage = Math.max(0, Math.min(totalPages - 1, _alertsPage + delta));
+    _renderAlerts();
+}
+
+function onAlertsToggle(details) {
+    const chevron = document.getElementById('alerts-chevron');
+    if (chevron) chevron.style.transform = details.open ? 'rotate(180deg)' : '';
+    if (details.open && !_alertsLoaded) {
+        loadAlerts();
+    }
+}
+
+function _buildAlertRow(e) {
+    const tr = document.createElement('tr');
+    tr.className = 'hover';
+
+    const ts  = e.timestamp ? new Date(e.timestamp) : null;
+    const tsStr = ts
+        ? ts.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+          + ' ' + ts.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+        : '—';
+
+    const tfLabel = e.timeframe === 'swing' ? 'Swing' : e.timeframe === 'short' ? '15m' : e.timeframe || '—';
+
+    const regimeCls = e.regime === 'BULLISH' ? 'text-success font-semibold'
+                    : e.regime === 'BEARISH' ? 'text-error font-semibold'
+                    : 'text-base-content/50';
+
+    const rs    = e.rs_vs_spy   != null ? (e.rs_vs_spy >= 0 ? '+' : '') + Number(e.rs_vs_spy).toFixed(2)   : '—';
+    const rsCls = e.rs_vs_spy   != null && e.rs_vs_spy >= 0 ? 'text-success' : 'text-error';
+    const rvol  = e.rvol        != null ? Number(e.rvol).toFixed(2)        : '—';
+    const bb    = e.bb_width_pct != null ? Number(e.bb_width_pct).toFixed(1) + '%' : '—';
+    const rsi   = e.rsi         != null ? Number(e.rsi).toFixed(1)         : '—';
+    const price = e.price       != null ? '$' + Number(e.price).toFixed(2) : '—';
+
+    tr.innerHTML = `
+        <td class="text-xs text-base-content/60 whitespace-nowrap">${tsStr}</td>
+        <td class="font-mono font-semibold text-sm">
+            <a href="/?symbol=${encodeURIComponent(e.symbol || '')}" target="_blank"
+               class="link link-hover text-primary">${e.symbol || '—'}</a>
+        </td>
+        <td class="text-xs"><span class="badge badge-xs badge-ghost">${tfLabel}</span></td>
+        <td class="text-xs text-right font-mono font-semibold">${e.score != null ? e.score : '—'}</td>
+        <td class="text-xs ${regimeCls}">${e.regime || '—'}</td>
+        <td class="text-xs text-right ${rsCls}">${rs}</td>
+        <td class="text-xs text-right">${rvol}</td>
+        <td class="text-xs text-right">${bb}</td>
+        <td class="text-xs text-right">${rsi}</td>
+        <td class="text-xs text-right">${price}</td>
+        <td class="text-xs text-base-content/50 max-w-xs truncate" title="${_escAttr(e.blocked_at || '')}">${e.blocked_at || '—'}</td>
+    `;
+    return tr;
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
-document.addEventListener('DOMContentLoaded', loadWatchlist);
+document.addEventListener('DOMContentLoaded', () => {
+    loadWatchlist();
+    // Pre-load the alerts count badge without opening the section
+    fetch('/api/alerts?limit=100')
+        .then(r => r.json())
+        .then(data => {
+            const countEl = document.getElementById('alerts-count');
+            if (countEl) countEl.textContent = Array.isArray(data) ? data.length : 0;
+        })
+        .catch(() => {});
+});
