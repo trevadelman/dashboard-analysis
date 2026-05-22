@@ -471,6 +471,14 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
             except Exception:
                 pass
 
+        # Write results to the scan cache so Market Pulse and the Scanner's
+        # "Load Cache" button always reflect the most recent bot scan.
+        if results:
+            try:
+                scanner.write_cache(results, list_name, timeframe)
+            except Exception as e:
+                logger.warning(f"Could not write scan cache after bot scan: {e}")
+
         # Previous signal set for this timeframe (symbol → signal dict)
         prev_signals: dict = state.get("last_signals", {}).get(timeframe, {})
         new_signals:  dict = {}
