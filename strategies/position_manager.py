@@ -149,20 +149,23 @@ class PositionReviewer:
                 suggested_stop=None, suggested_target=None, details=details,
             )
 
-        # ── Check 2: Price crossed back below EMA9 → EXIT ────────────────────
-        if momentum.price_vs_ema9 == 'BELOW' and side == 'buy':
-            details.append("❌ Price crossed back below EMA9 — trigger invalidated")
+        # ── Check 2: Price crossed back below EMA9 AND slope is falling → EXIT ─
+        # Requiring the EMA9 slope to also be falling prevents premature exits on
+        # single-candle wicks below EMA9 while the trend is still intact.
+        # A real breakdown requires both: price below EMA9 AND EMA9 rolling over.
+        if momentum.price_vs_ema9 == 'BELOW' and side == 'buy' and momentum.ema9_slope_trend == 'FALLING':
+            details.append("❌ Price crossed back below EMA9 with EMA9 slope falling — trigger invalidated")
             return self._make_review(
                 symbol, 'EXIT',
-                'Price has crossed back below EMA9. The breakout trigger is invalidated — exit the position.',
+                'Price has crossed back below EMA9 and the EMA9 slope is falling. The breakout trigger is invalidated — exit the position.',
                 momentum, position, current_entry, current_stop, current_target,
                 suggested_stop=None, suggested_target=None, details=details,
             )
-        if momentum.price_vs_ema9 == 'ABOVE' and side == 'sell':
-            details.append("❌ Price crossed back above EMA9 — trigger invalidated (short)")
+        if momentum.price_vs_ema9 == 'ABOVE' and side == 'sell' and momentum.ema9_slope_trend == 'RISING':
+            details.append("❌ Price crossed back above EMA9 with EMA9 slope rising — trigger invalidated (short)")
             return self._make_review(
                 symbol, 'EXIT',
-                'Price has crossed back above EMA9. The breakdown trigger is invalidated — cover the short.',
+                'Price has crossed back above EMA9 and the EMA9 slope is rising. The breakdown trigger is invalidated — cover the short.',
                 momentum, position, current_entry, current_stop, current_target,
                 suggested_stop=None, suggested_target=None, details=details,
             )

@@ -114,7 +114,7 @@ Every symbol gets a score (0–100) and grade (A/B/C/D) regardless of whether it
 | `TRAIL_STOP` | RVOL fading or EMA9 slope flattening | `adjust_orders()` — raise stop |
 | `PARTIAL_PROFIT` | RSI divergence (swing pivot method) | `adjust_orders()` — trail stop to lock in profit (Alpaca doesn't support partial closes on bracket orders) |
 | `RAISE_TARGET` | Price at/above current target with momentum intact | `adjust_orders()` — raise take-profit, trail stop |
-| `EXIT` | Regime flipped to NO_TRADE or price crossed back below EMA9 | `close_position()` |
+| `EXIT` | Regime flipped to NO_TRADE, or price crossed back below EMA9 **and** EMA9 slope is falling | `close_position()` |
 
 ### Why PARTIAL_PROFIT trails the stop instead of closing shares
 
@@ -134,13 +134,12 @@ Every auto-entry candidate passes through these gates in sequence. The first fai
 2. **Circuit breakers** — manual halt or daily loss limit breached
 3. **BOT_AUTONOMOUS flag** — must be enabled in settings
 4. **Symbol blacklist** — user can blacklist individual symbols from bot activity
-5. **New-signal deduplication** — signal must be new this cycle (not seen last scan)
-6. **Per-symbol cooldown** — configurable, default 24h between entries on same symbol
-7. **Grade filter** — signal grade must meet `BOT_MIN_GRADE` (default B)
-8. **Tier 4 R:R check** — `passes_risk_checks()` validates R:R and price validity
-9. **Position size check** — risk-sized quantity must be ≥ 1 share
-10. **Pending-entries guard** — `open_positions + entries_this_cycle < max_positions`
-11. **`can_trade()`** — no existing position, no pending orders for this symbol
+5. **Per-symbol cooldown** — configurable, default 24h between entries on same symbol
+6. **Grade filter** — signal grade must meet `BOT_MIN_GRADE` (default B)
+7. **Tier 4 R:R check** — `passes_risk_checks()` validates R:R and price validity
+8. **Position size check** — risk-sized quantity must be ≥ 1 share
+9. **Pending-entries guard** — `open_positions + entries_this_cycle < max_positions`
+10. **`can_trade()`** — no existing position, no pending orders for this symbol
 
 ---
 
@@ -153,6 +152,8 @@ Every auto-entry candidate passes through these gates in sequence. The first fai
 | 252-bar ATR percentile rank | Long memory distortion — a spike from a year ago still affects the rank |
 | `max(1, ...)` floor in `calculate_position_size` | Silently overrides risk parameters — better to skip the entry than take a 1-share position that bypasses sizing |
 | Fixed 5-bar compression lookback for all timeframes | Too narrow for intraday — stop ended up inside the compression zone |
+| Single-candle EMA9 cross as EXIT trigger | One wick below EMA9 during a healthy pullback caused premature exits — now requires EMA9 slope to also be falling |
+| `last_signals` dedup in entry scan | Redundant with the 24h entry cooldown — removed to prevent `bot_state.json` bloat on large universe scans |
 
 ---
 
