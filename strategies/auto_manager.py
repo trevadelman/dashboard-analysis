@@ -433,12 +433,11 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
       2. Circuit breakers (halt, daily loss)
       3. BOT_AUTONOMOUS flag
       4. Symbol blacklist
-      5. New-signal deduplication (not seen last cycle)
-      6. Per-symbol entry cooldown
-      7. Grade filter (BOT_MIN_GRADE)
-      8. Tier 4 R:R check (passes_risk_checks)
-      9. can_trade() — position count, existing position, pending orders
-      10. Pending-entries guard — prevents exceeding max_positions within one cycle
+      5. Per-symbol entry cooldown
+      6. Grade filter (BOT_MIN_GRADE)
+      7. Tier 4 R:R check (passes_risk_checks)
+      8. can_trade() — position count, existing position, pending orders
+      9. Pending-entries guard — prevents exceeding max_positions within one cycle
     """
     from screeners.market_scanner import MarketScanner
     from strategies.momentum import SignalHierarchy
@@ -479,10 +478,6 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
             except Exception as e:
                 logger.warning(f"Could not write scan cache after bot scan: {e}")
 
-        # Previous signal set for this timeframe (symbol → signal dict)
-        prev_signals: dict = state.get("last_signals", {}).get(timeframe, {})
-        new_signals:  dict = {}
-
         from data.settings_store import get_blacklist
         blacklist = get_blacklist()
 
@@ -501,19 +496,11 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
             sym    = (r.get("symbol") or "").upper()
             signal = r.get("signal", "NONE")
             if not sym or signal == "NONE":
-                new_signals[sym] = r
                 continue
-
-            new_signals[sym] = r
 
             # Skip symbols the user has blacklisted from bot activity
             if sym in blacklist:
                 logger.debug(f"Entry scan: skipping {sym} — blacklisted from bot activity")
-                continue
-
-            # Only act on signals that are NEW this cycle
-            if sym in prev_signals:
-                logger.debug(f"Signal for {sym} ({timeframe}) already seen last cycle — skipping")
                 continue
 
             # Per-symbol entry cooldown
@@ -673,10 +660,6 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
                 logger.error(f"Auto-entry failed for {sym}: {e}")
                 _log_action("AUTO_ENTRY_FAILED", sym, {"error": str(e)}, "error")
 
-        # Update last signal set for this timeframe
-        if "last_signals" not in state:
-            state["last_signals"] = {}
-        state["last_signals"][timeframe] = new_signals
         _save_state(state)
 
     except Exception as e:
