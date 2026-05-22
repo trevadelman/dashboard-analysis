@@ -21,12 +21,21 @@ logger = logging.getLogger(__name__)
 # Fields:
 #   interval     — interval string used by bot.get_market_data() and market_scanner
 #   alpaca_tf    — string key for the Alpaca TimeFrame lookup in backtester/engine.py
-#   days         — lookback in calendar days for data fetching
+#   days         — lookback in calendar days for full analysis (dashboard, position review)
+#   scan_days    — lookback in calendar days for batch scanning only.
+#                  Smaller than days to minimise rows per Alpaca request and avoid
+#                  SDK pagination.  Must be large enough for all indicator lookbacks:
+#                    BB width percentile: 252 bars
+#                    ATR50 / EMA50: 50 bars
+#                  For hourly bars: 252 bars ≈ 18 trading days ≈ 25 calendar days.
+#                  30 days gives a comfortable warm-up buffer.
+#                  For 15-min bars: 252 bars ≈ 4.5 trading days ≈ 7 calendar days.
+#                  14 days is more than sufficient.
 #   label        — human-readable label for the UI
 TIMEFRAME_CONFIG = {
-    'long':  {'interval': '1d',  'alpaca_tf': 'Day',      'days': 365, 'label': 'Long (Daily)'},
-    'swing': {'interval': '1h',  'alpaca_tf': 'Hour',     'days': 90,  'label': 'Swing (Hourly)'},
-    'short': {'interval': '15m', 'alpaca_tf': 'Minute15', 'days': 30,  'label': 'Short (15-min)'},
+    'long':  {'interval': '1d',  'alpaca_tf': 'Day',      'days': 365, 'scan_days': 365, 'label': 'Long (Daily)'},
+    'swing': {'interval': '1h',  'alpaca_tf': 'Hour',     'days': 90,  'scan_days': 30,  'label': 'Swing (Hourly)'},
+    'short': {'interval': '15m', 'alpaca_tf': 'Minute15', 'days': 30,  'scan_days': 14,  'label': 'Short (15-min)'},
 }
 
 

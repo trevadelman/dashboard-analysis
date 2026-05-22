@@ -74,7 +74,7 @@ _REQUEST_INTERVAL = 0.36
 # Each thread makes one Alpaca bars request.  At 50 symbols/batch and 4 workers,
 # a 500-symbol universe (10 batches) completes in ~ceil(10/4) = 3 round-trips
 # instead of 10 sequential ones.  Well under Alpaca's 200 req/min cap.
-_MAX_FETCH_WORKERS = 4
+_MAX_FETCH_WORKERS = 8
 
 
 class MarketScanner:
@@ -272,10 +272,15 @@ class MarketScanner:
         return list(SYMBOL_LISTS.get(list_name, []))
 
     def _fetch_bars_batch(self, symbols: list, timeframe: str = "long") -> dict:
-        """Fetch equity bars for a batch of symbols via bar_fetcher."""
+        """Fetch equity bars for a batch of symbols via bar_fetcher.
+
+        Uses scan_days (not days) to minimise rows per request and avoid SDK
+        pagination.  scan_days is sized to cover all indicator lookbacks (252
+        bars minimum) without fetching the full dashboard history.
+        """
         cfg      = TIMEFRAME_CONFIG.get(timeframe, TIMEFRAME_CONFIG["long"])
         interval = cfg["interval"]
-        days     = cfg["days"]
+        days     = cfg["scan_days"]
         return fetch_equity_bars_batch(self._data_client, symbols, '5d', interval, extra_days=days - 5)
 
     def _scan_one_from_bars(self, symbol: str, bars: pd.DataFrame, timeframe: str = "long") -> dict | None:
@@ -488,13 +493,16 @@ class MarketScanner:
         return total, grade
 
     def _fetch_crypto_bars_batch(self, symbols: list, timeframe: str = "long") -> dict:
-        """Fetch crypto bars for a batch of symbols via bar_fetcher."""
+        """Fetch crypto bars for a batch of symbols via bar_fetcher.
+
+        Uses scan_days (not days) for the same reason as _fetch_bars_batch.
+        """
         if not self._crypto_client:
             logger.debug("No crypto client available — skipping crypto batch fetch")
             return {sym: pd.DataFrame() for sym in symbols}
         cfg      = TIMEFRAME_CONFIG.get(timeframe, TIMEFRAME_CONFIG["long"])
         interval = cfg["interval"]
-        days     = cfg["days"]
+        days     = cfg["scan_days"]
         return fetch_crypto_bars_batch(self._crypto_client, symbols, '5d', interval, extra_days=days - 5)
 
     @staticmethod
