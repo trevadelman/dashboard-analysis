@@ -660,7 +660,7 @@
         <div class="drawer-side z-50">
             <label for="nav-drawer" aria-label="close sidebar" class="drawer-overlay"></label>
             <ul class="menu bg-base-200 min-h-full w-72 p-4 gap-1 flex flex-col">
-                <li class="menu-title text-xs uppercase tracking-widest text-base-content/50 mb-2">Navigation</li>
+                <li class="menu-title text-xs uppercase tracking-widest text-base-content/50 mb-2">Discover</li>
                 <li>
                     <a href="/" class="{{ 'active font-semibold' if active_page == 'dashboard' else '' }}">
                         <i class="bi bi-speedometer2 text-lg"></i>
@@ -686,12 +686,7 @@
                     </a>
                 </li>
                 <div class="divider my-2"></div>
-                <li>
-                    <a href="/backtest" class="{{ 'active font-semibold' if active_page == 'backtest' else '' }}">
-                        <i class="bi bi-clock-history text-lg"></i>
-                        Backtest
-                    </a>
-                </li>
+                <li class="menu-title text-xs uppercase tracking-widest text-base-content/50 mb-2">Manage</li>
                 <li>
                     <a href="/positions" class="{{ 'active font-semibold' if active_page == 'positions' else '' }}">
                         <i class="bi bi-bar-chart-fill text-lg"></i>
@@ -702,6 +697,14 @@
                     <a href="/bot" class="{{ 'active font-semibold' if active_page == 'bot' else '' }}">
                         <i class="bi bi-robot text-lg"></i>
                         Bot
+                    </a>
+                </li>
+                <div class="divider my-2"></div>
+                <li class="menu-title text-xs uppercase tracking-widest text-base-content/50 mb-2">Tools</li>
+                <li>
+                    <a href="/backtest" class="{{ 'active font-semibold' if active_page == 'backtest' else '' }}">
+                        <i class="bi bi-clock-history text-lg"></i>
+                        Backtest
                     </a>
                 </li>
                 <!-- Spacer pushes Settings to the bottom -->
