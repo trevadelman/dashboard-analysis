@@ -201,14 +201,19 @@ class TechnicalIndicators:
         df['vwap']    = TechnicalIndicators.session_vwap(df)
 
         # ── Relative Strength vs benchmark ───────────────────────────────────
-        # Column is always named rs_vs_spy_20 for backward compatibility with
-        # all downstream strategy and scanner code.
+        # rs_vs_spy_20: 20-bar RS — primary signal used by Tier 2 and scanner scoring.
+        # rs_vs_spy_10: 10-bar RS — shorter window used by the participation-phase
+        #               reviewer exit (close < EMA21 AND rs_vs_spy_10 <= -5%).
         if benchmark_data is not None and not benchmark_data.empty:
             df['rs_vs_spy_20'] = TechnicalIndicators.relative_strength_vs_benchmark(
                 df, benchmark_data, period=20
             )
+            df['rs_vs_spy_10'] = TechnicalIndicators.relative_strength_vs_benchmark(
+                df, benchmark_data, period=10
+            )
         else:
             df['rs_vs_spy_20'] = np.nan
+            df['rs_vs_spy_10'] = np.nan
 
         logger.debug("Calculated all technical indicators")
         return df

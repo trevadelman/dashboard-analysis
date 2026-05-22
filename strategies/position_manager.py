@@ -5,11 +5,31 @@ stop/target adjustments or exits.
 
 Designed as a pure function so the same logic can be called from:
   - The manual review UI (positions page)
-  - A future automated hourly loop
+  - The automated hourly review loop (auto_manager.py)
+  - The backtest engine (backtester/engine.py)
+
+Two-phase review architecture
+──────────────────────────────
+Phase 1 — Validation (immediately after entry, until transition confirmed)
+  Goal: kill failed breakouts quickly.
+  Exits: regime flip, EMA9 cross + slope falling, catastrophic RVOL collapse (< 0.5x).
+  Transition to Phase 2 when ANY of:
+    - MFE >= 1R (trade has reached 1× initial risk in profit)
+    - 3 consecutive closes above EMA9 with slope rising
+    - Close > entry_price + 1.0× ATR (price has moved away from the breakout level)
+
+Phase 2 — Participation (after transition)
+  Goal: let the trend run; preserve convexity.
+  Exits: regime flip, close < EMA21 AND rs_vs_spy_10 <= -5% (structural breakdown).
+  Suppressed: RVOL fading, EMA9 slope flattening, RSI divergence.
+  RAISE_TARGET still fires — extend winners when momentum confirms.
+
+The phase is tracked in position_state (a plain dict persisted in bot_state.json
+by auto_manager.py).  When position_state is None (manual UI review, first call),
+the reviewer defaults to validation-phase behavior — safe and conservative.
 """
 
 import logging
-import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -43,11 +63,14 @@ class PositionReview:
     Full review result for a single open position.
 
     verdict values:
-      HOLD          — thesis intact, no action needed
-      TRAIL_STOP    — momentum stalling; raise stop to lock in profit
-      RAISE_TARGET  — momentum accelerated; new target is higher
-      PARTIAL_PROFIT — RSI diverging or RVOL fading; take partial profit
-      EXIT          — regime flipped or price crossed back below EMA9; close now
+      HOLD           — thesis intact, no action needed
+      TRAIL_STOP     — momentum stalling; raise stop to lock in profit
+      RAISE_TARGET   — momentum accelerated; new target is higher
+      PARTIAL_PROFIT — RSI diverging; take partial profit (validation phase only)
+      EXIT           — regime flipped, structural breakdown, or failed breakout; close now
+
+    updated_position_state: the caller should persist this back to bot_state.json
+      so the next review cycle has accurate MFE, bars_since_entry, and phase.
     """
     symbol: str
     verdict: str
@@ -60,6 +83,9 @@ class PositionReview:
     suggested_target: Optional[float]
     unrealized_pl: Optional[float]
     unrealized_plpc: Optional[float]
+    phase: str = "validation"                    # 'validation' | 'participation'
+    phase_transition: Optional[str] = None       # reason for transition, if it just happened
+    updated_position_state: Optional[dict] = None
     details: List[str] = field(default_factory=list)
 
 
@@ -69,12 +95,17 @@ class PositionReviewer:
     """
     Reviews an open position against current market conditions.
 
-    Usage:
+    Usage (automated loop):
+        reviewer = PositionReviewer(timeframe='swing')
+        review   = reviewer.review(position, orders, bars, position_state=state)
+        # persist review.updated_position_state back to bot_state.json
+
+    Usage (manual UI / backtest — no persistent state):
         reviewer = PositionReviewer(timeframe='long')
         review   = reviewer.review(position, orders, bars)
+        # defaults to validation-phase behavior
 
-    All inputs are plain dicts/DataFrames so this can be called from
-    both the web handler and a future automated loop without modification.
+    All inputs are plain dicts/DataFrames — no Alpaca SDK objects.
     """
 
     def __init__(self, timeframe: str = 'long'):
@@ -88,19 +119,23 @@ class PositionReviewer:
         position: Dict[str, Any],
         orders: List[Dict[str, Any]],
         bars: pd.DataFrame,
+        position_state: Optional[Dict[str, Any]] = None,
     ) -> PositionReview:
         """
         Run the full position review.
 
         Args:
-            position: dict from bot.get_positions() — has symbol, qty,
-                      avg_entry_price, current_price, unrealized_pl, unrealized_plpc
-            orders:   list from bot.get_orders() filtered to this symbol —
-                      includes bracket legs (stop, limit/take_profit)
-            bars:     DataFrame from bot.get_market_data() with indicators
+            position:       dict from bot.get_positions() — has symbol, qty,
+                            avg_entry_price, current_price, unrealized_pl, unrealized_plpc
+            orders:         list from bot.get_orders() filtered to this symbol —
+                            includes bracket legs (stop, limit/take_profit)
+            bars:           DataFrame from bot.get_market_data() with indicators
+            position_state: optional persistent state dict (see module docstring).
+                            When None, defaults to validation-phase behavior.
 
         Returns:
-            PositionReview with verdict, reason, suggested adjustments
+            PositionReview with verdict, reason, suggested adjustments, and
+            updated_position_state for the caller to persist.
         """
         symbol = position.get('symbol', '')
         details = []
@@ -125,6 +160,8 @@ class PositionReviewer:
                 suggested_stop=None, suggested_target=None,
                 unrealized_pl=position.get('unrealized_pl'),
                 unrealized_plpc=position.get('unrealized_plpc'),
+                phase='validation',
+                updated_position_state=position_state,
                 details=details,
             )
 
@@ -134,10 +171,44 @@ class PositionReviewer:
             bars = bars.copy()
             bars.loc[bars.index[-1], 'close'] = current_price
 
-        latest = bars.iloc[-1]
+        latest   = bars.iloc[-1]
         momentum = self._compute_momentum_health(bars, latest, side)
         details.append(f"Regime: {momentum.regime} | RSI: {momentum.rsi} ({momentum.rsi_trend}) | EMA9 slope: {momentum.ema9_slope} ({momentum.ema9_slope_trend})")
         details.append(f"RVOL: {momentum.rvol} ({momentum.rvol_status}) | Extension: {momentum.extension}x ATR ({momentum.extension_status}) | Price vs EMA9: {momentum.price_vs_ema9}")
+
+        # Update position state (MFE, bars_since_entry, phase transition)
+        updated_state, phase, phase_transition = self._update_position_state(
+            position_state, current_entry, current_price, current_stop,
+            side, bars, latest,
+        )
+        if phase_transition:
+            details.append(f"📈 Phase transition: validation → participation | {phase_transition}")
+
+        if phase == 'validation':
+            return self._review_validation_phase(
+                symbol, side, momentum, position, bars, latest,
+                current_entry, current_stop, current_target, current_price,
+                updated_state, phase, details,
+            )
+        else:
+            return self._review_participation_phase(
+                symbol, side, momentum, position, bars, latest,
+                current_entry, current_stop, current_target, current_price,
+                updated_state, phase, phase_transition, details,
+            )
+
+    # ── Phase routing ─────────────────────────────────────────────────────────
+
+    def _review_validation_phase(
+        self, symbol, side, momentum, position, bars, latest,
+        current_entry, current_stop, current_target, current_price,
+        updated_state, phase, details,
+    ) -> PositionReview:
+        """
+        Validation phase: aggressive protection.
+        Kill failed breakouts quickly.  Most exits are allowed.
+        """
+        details.append(f"Phase: VALIDATION")
 
         # ── Check 1: Regime flipped → EXIT ────────────────────────────────────
         if momentum.regime == 'NO_TRADE':
@@ -146,20 +217,19 @@ class PositionReviewer:
                 symbol, 'EXIT',
                 'Market regime has flipped to NO_TRADE — the macro thesis is invalidated. Exit to preserve capital.',
                 momentum, position, current_entry, current_stop, current_target,
-                suggested_stop=None, suggested_target=None, details=details,
+                suggested_stop=None, suggested_target=None,
+                phase=phase, updated_state=updated_state, details=details,
             )
 
         # ── Check 2: Price crossed back below EMA9 AND slope is falling → EXIT ─
-        # Requiring the EMA9 slope to also be falling prevents premature exits on
-        # single-candle wicks below EMA9 while the trend is still intact.
-        # A real breakdown requires both: price below EMA9 AND EMA9 rolling over.
         if momentum.price_vs_ema9 == 'BELOW' and side == 'buy' and momentum.ema9_slope_trend == 'FALLING':
             details.append("❌ Price crossed back below EMA9 with EMA9 slope falling — trigger invalidated")
             return self._make_review(
                 symbol, 'EXIT',
                 'Price has crossed back below EMA9 and the EMA9 slope is falling. The breakout trigger is invalidated — exit the position.',
                 momentum, position, current_entry, current_stop, current_target,
-                suggested_stop=None, suggested_target=None, details=details,
+                suggested_stop=None, suggested_target=None,
+                phase=phase, updated_state=updated_state, details=details,
             )
         if momentum.price_vs_ema9 == 'ABOVE' and side == 'sell' and momentum.ema9_slope_trend == 'RISING':
             details.append("❌ Price crossed back above EMA9 with EMA9 slope rising — trigger invalidated (short)")
@@ -167,10 +237,26 @@ class PositionReviewer:
                 symbol, 'EXIT',
                 'Price has crossed back above EMA9 and the EMA9 slope is rising. The breakdown trigger is invalidated — cover the short.',
                 momentum, position, current_entry, current_stop, current_target,
-                suggested_stop=None, suggested_target=None, details=details,
+                suggested_stop=None, suggested_target=None,
+                phase=phase, updated_state=updated_state, details=details,
             )
 
-        # ── Check 3: Price has exceeded the current target → RAISE_TARGET ─────
+        # ── Check 3: Catastrophic RVOL collapse → EXIT ────────────────────────
+        # Only fires on truly catastrophic volume collapse (< 0.5x), not normal
+        # post-breakout normalization.  This catches failed breakouts where
+        # participation evaporates immediately after entry.
+        if momentum.rvol is not None and momentum.rvol < 0.5:
+            details.append(f"❌ Catastrophic RVOL collapse ({momentum.rvol:.2f}x) — breakout participation evaporated")
+            return self._make_review(
+                symbol, 'EXIT',
+                f'RVOL has collapsed to {momentum.rvol:.2f}x — breakout participation has evaporated. '
+                'This is a failed breakout. Exit to preserve capital.',
+                momentum, position, current_entry, current_stop, current_target,
+                suggested_stop=None, suggested_target=None,
+                phase=phase, updated_state=updated_state, details=details,
+            )
+
+        # ── Check 4: Price has exceeded the current target → RAISE_TARGET ─────
         if current_target and current_price:
             if side == 'buy' and current_price >= current_target * 0.98:
                 new_target, new_stop = self._compute_raised_target(bars, latest, current_entry, current_stop, side)
@@ -179,10 +265,10 @@ class PositionReviewer:
                     return self._make_review(
                         symbol, 'RAISE_TARGET',
                         f'Price has reached the original target of ${current_target:.2f} with momentum still intact. '
-                        f'The re-run signal suggests a new target of ${new_target:.2f}. '
-                        f'Raise the take-profit and trail the stop to ${new_stop:.2f} to lock in profit.',
+                        f'Raise the take-profit to ${new_target:.2f} and trail the stop to ${new_stop:.2f} to lock in profit.',
                         momentum, position, current_entry, current_stop, current_target,
-                        suggested_stop=new_stop, suggested_target=new_target, details=details,
+                        suggested_stop=new_stop, suggested_target=new_target,
+                        phase=phase, updated_state=updated_state, details=details,
                     )
             elif side == 'sell' and current_price <= current_target * 1.02:
                 new_target, new_stop = self._compute_raised_target(bars, latest, current_entry, current_stop, side)
@@ -191,14 +277,13 @@ class PositionReviewer:
                     return self._make_review(
                         symbol, 'RAISE_TARGET',
                         f'Price has reached the original target of ${current_target:.2f} with momentum still intact. '
-                        f'The re-run signal suggests a new target of ${new_target:.2f}. '
-                        f'Lower the take-profit and trail the stop to ${new_stop:.2f} to lock in profit.',
+                        f'Lower the take-profit to ${new_target:.2f} and trail the stop to ${new_stop:.2f} to lock in profit.',
                         momentum, position, current_entry, current_stop, current_target,
-                        suggested_stop=new_stop, suggested_target=new_target, details=details,
+                        suggested_stop=new_stop, suggested_target=new_target,
+                        phase=phase, updated_state=updated_state, details=details,
                     )
 
-        # ── Check 4: RSI divergence → PARTIAL_PROFIT ─────────────────────────
-        # Price making new highs but RSI is falling = distribution signal
+        # ── Check 5: RSI divergence → PARTIAL_PROFIT ─────────────────────────
         rsi_diverging = self._check_rsi_divergence(bars, side)
         if rsi_diverging:
             new_stop = self._compute_trailing_stop(bars, latest, current_entry, current_stop, side)
@@ -207,10 +292,10 @@ class PositionReviewer:
                 details.append("✅ Stop already at optimal level — no adjustment needed")
                 return self._make_review(
                     symbol, 'HOLD',
-                    'RSI divergence detected but the stop is already at the optimal level. '
-                    'No adjustment needed — hold the position.',
+                    'RSI divergence detected but the stop is already at the optimal level. No adjustment needed.',
                     momentum, position, current_entry, current_stop, current_target,
-                    suggested_stop=None, suggested_target=None, details=details,
+                    suggested_stop=None, suggested_target=None,
+                    phase=phase, updated_state=updated_state, details=details,
                 )
             return self._make_review(
                 symbol, 'PARTIAL_PROFIT',
@@ -218,10 +303,11 @@ class PositionReviewer:
                 'This is a distribution signal. Consider taking partial profit and trailing the stop '
                 f'to ${new_stop:.2f} on the remainder.',
                 momentum, position, current_entry, current_stop, current_target,
-                suggested_stop=new_stop, suggested_target=current_target, details=details,
+                suggested_stop=new_stop, suggested_target=current_target,
+                phase=phase, updated_state=updated_state, details=details,
             )
 
-        # ── Check 5: RVOL fading → TRAIL_STOP ────────────────────────────────
+        # ── Check 6: RVOL fading → TRAIL_STOP ────────────────────────────────
         if momentum.rvol_status == 'LOW':
             new_stop = self._compute_trailing_stop(bars, latest, current_entry, current_stop, side)
             details.append(f"⚠️ RVOL fading — trail stop to: ${new_stop}")
@@ -229,10 +315,10 @@ class PositionReviewer:
                 details.append("✅ Stop already at optimal level — no adjustment needed")
                 return self._make_review(
                     symbol, 'HOLD',
-                    'Volume is fading but the stop is already at the optimal level. '
-                    'No adjustment needed — hold the position.',
+                    'Volume is fading but the stop is already at the optimal level. No adjustment needed.',
                     momentum, position, current_entry, current_stop, current_target,
-                    suggested_stop=None, suggested_target=None, details=details,
+                    suggested_stop=None, suggested_target=None,
+                    phase=phase, updated_state=updated_state, details=details,
                 )
             in_profit = current_entry is not None and current_price is not None and (
                 (side == 'buy'  and current_price > current_entry) or
@@ -242,12 +328,13 @@ class PositionReviewer:
             return self._make_review(
                 symbol, 'TRAIL_STOP',
                 f'Volume is fading (RVOL {momentum.rvol:.2f}x). Momentum may be stalling. '
-                f'Trail the stop to ${new_stop:.2f} to {stop_action} while giving the trade room to continue.',
+                f'Trail the stop to ${new_stop:.2f} to {stop_action}.',
                 momentum, position, current_entry, current_stop, current_target,
-                suggested_stop=new_stop, suggested_target=current_target, details=details,
+                suggested_stop=new_stop, suggested_target=current_target,
+                phase=phase, updated_state=updated_state, details=details,
             )
 
-        # ── Check 6: EMA9 slope flattening → TRAIL_STOP ──────────────────────
+        # ── Check 7: EMA9 slope flattening → TRAIL_STOP ──────────────────────
         if momentum.ema9_slope_trend == 'FALLING' and momentum.rvol_status == 'NORMAL':
             new_stop = self._compute_trailing_stop(bars, latest, current_entry, current_stop, side)
             details.append(f"⚠️ EMA9 slope flattening — trail stop to: ${new_stop}")
@@ -255,10 +342,10 @@ class PositionReviewer:
                 details.append("✅ Stop already at optimal level — no adjustment needed")
                 return self._make_review(
                     symbol, 'HOLD',
-                    'EMA9 slope is flattening but the stop is already at the optimal level. '
-                    'No adjustment needed — hold the position.',
+                    'EMA9 slope is flattening but the stop is already at the optimal level. No adjustment needed.',
                     momentum, position, current_entry, current_stop, current_target,
-                    suggested_stop=None, suggested_target=None, details=details,
+                    suggested_stop=None, suggested_target=None,
+                    phase=phase, updated_state=updated_state, details=details,
                 )
             in_profit = current_entry is not None and current_price is not None and (
                 (side == 'buy'  and current_price > current_entry) or
@@ -270,18 +357,204 @@ class PositionReviewer:
                 f'EMA9 slope is flattening, suggesting the short-term momentum is decelerating. '
                 f'Trail the stop to ${new_stop:.2f} to {stop_action}.',
                 momentum, position, current_entry, current_stop, current_target,
-                suggested_stop=new_stop, suggested_target=current_target, details=details,
+                suggested_stop=new_stop, suggested_target=current_target,
+                phase=phase, updated_state=updated_state, details=details,
             )
 
         # ── All checks passed → HOLD ──────────────────────────────────────────
-        details.append("✅ All momentum checks passed — thesis intact")
+        details.append("✅ All validation checks passed — thesis intact")
         return self._make_review(
             symbol, 'HOLD',
             'Momentum is intact. Regime is bullish, price is above EMA9, RVOL is elevated, '
             'and RSI is trending in the right direction. Hold the position with current levels.',
             momentum, position, current_entry, current_stop, current_target,
-            suggested_stop=None, suggested_target=None, details=details,
+            suggested_stop=None, suggested_target=None,
+            phase=phase, updated_state=updated_state, details=details,
         )
+
+    def _review_participation_phase(
+        self, symbol, side, momentum, position, bars, latest,
+        current_entry, current_stop, current_target, current_price,
+        updated_state, phase, phase_transition, details,
+    ) -> PositionReview:
+        """
+        Participation phase: convexity-first.
+        Let the trend run.  Only exit on structural breakdown.
+        RVOL fading, EMA9 slope noise, and RSI divergence are suppressed.
+        """
+        details.append(f"Phase: PARTICIPATION")
+
+        # ── Check 1: Regime flipped → EXIT ────────────────────────────────────
+        if momentum.regime == 'NO_TRADE':
+            details.append("❌ Regime flipped to NO_TRADE — structural breakdown")
+            return self._make_review(
+                symbol, 'EXIT',
+                'Market regime has flipped to NO_TRADE — the macro thesis is invalidated. Exit to preserve capital.',
+                momentum, position, current_entry, current_stop, current_target,
+                suggested_stop=None, suggested_target=None,
+                phase=phase, updated_state=updated_state, details=details,
+            )
+
+        # ── Check 2: Close < EMA21 AND RS vs SPY 10-bar <= -5% → EXIT ─────────
+        # Both conditions must be true — neither alone is sufficient.
+        # This avoids killing normal pullbacks but exits when price structure
+        # and relative strength both break simultaneously.
+        ema21 = float(latest.get('ema_21', float('inf')))
+        rs10  = latest.get('rs_vs_spy_10')
+        price = float(latest.get('close', 0))
+
+        if side == 'buy':
+            price_below_ema21 = price < ema21
+            rs_deteriorating  = rs10 is not None and not pd.isna(rs10) and float(rs10) <= -5.0
+            if price_below_ema21 and rs_deteriorating:
+                details.append(f"❌ Structural breakdown: price below EMA21 (${ema21:.2f}) AND RS vs SPY 10-bar = {float(rs10):.1f}%")
+                return self._make_review(
+                    symbol, 'EXIT',
+                    f'Structural breakdown: price has fallen below EMA21 (${ema21:.2f}) and relative strength '
+                    f'vs SPY over 10 bars is {float(rs10):.1f}% — both price structure and RS have broken. Exit.',
+                    momentum, position, current_entry, current_stop, current_target,
+                    suggested_stop=None, suggested_target=None,
+                    phase=phase, updated_state=updated_state, details=details,
+                )
+        else:
+            price_above_ema21 = price > ema21
+            rs_deteriorating  = rs10 is not None and not pd.isna(rs10) and float(rs10) >= 5.0
+            if price_above_ema21 and rs_deteriorating:
+                details.append(f"❌ Structural breakdown (short): price above EMA21 (${ema21:.2f}) AND RS vs SPY 10-bar = {float(rs10):.1f}%")
+                return self._make_review(
+                    symbol, 'EXIT',
+                    f'Structural breakdown (short): price has risen above EMA21 (${ema21:.2f}) and relative strength '
+                    f'vs SPY over 10 bars is {float(rs10):.1f}% — both price structure and RS have broken. Cover.',
+                    momentum, position, current_entry, current_stop, current_target,
+                    suggested_stop=None, suggested_target=None,
+                    phase=phase, updated_state=updated_state, details=details,
+                )
+
+        # ── Check 3: Price has exceeded the current target → RAISE_TARGET ─────
+        if current_target and current_price:
+            if side == 'buy' and current_price >= current_target * 0.98:
+                new_target, new_stop = self._compute_raised_target(bars, latest, current_entry, current_stop, side)
+                if new_target and new_target > current_target:
+                    details.append(f"✅ Price at/above target — new target: ${new_target} | trail stop to: ${new_stop}")
+                    return self._make_review(
+                        symbol, 'RAISE_TARGET',
+                        f'Price has reached the original target of ${current_target:.2f} with momentum still intact. '
+                        f'Raise the take-profit to ${new_target:.2f} and trail the stop to ${new_stop:.2f} to lock in profit.',
+                        momentum, position, current_entry, current_stop, current_target,
+                        suggested_stop=new_stop, suggested_target=new_target,
+                        phase=phase, updated_state=updated_state, details=details,
+                    )
+            elif side == 'sell' and current_price <= current_target * 1.02:
+                new_target, new_stop = self._compute_raised_target(bars, latest, current_entry, current_stop, side)
+                if new_target and new_target < current_target:
+                    details.append(f"✅ Price at/below target (short) — new target: ${new_target} | trail stop to: ${new_stop}")
+                    return self._make_review(
+                        symbol, 'RAISE_TARGET',
+                        f'Price has reached the original target of ${current_target:.2f} with momentum still intact. '
+                        f'Lower the take-profit to ${new_target:.2f} and trail the stop to ${new_stop:.2f} to lock in profit.',
+                        momentum, position, current_entry, current_stop, current_target,
+                        suggested_stop=new_stop, suggested_target=new_target,
+                        phase=phase, updated_state=updated_state, details=details,
+                    )
+
+        # ── All checks passed → HOLD ──────────────────────────────────────────
+        details.append("✅ Participation phase: trend intact — holding for convexity")
+        return self._make_review(
+            symbol, 'HOLD',
+            'Trade is in the participation phase. Trend is intact — regime is healthy, '
+            'no structural breakdown detected. Holding for full trend participation.',
+            momentum, position, current_entry, current_stop, current_target,
+            suggested_stop=None, suggested_target=None,
+            phase=phase, updated_state=updated_state, details=details,
+        )
+
+    # ── Position state management ─────────────────────────────────────────────
+
+    def _update_position_state(
+        self,
+        state: Optional[Dict[str, Any]],
+        current_entry: Optional[float],
+        current_price: Optional[float],
+        current_stop: Optional[float],
+        side: str,
+        bars: pd.DataFrame,
+        latest: pd.Series,
+    ) -> tuple[dict, str, Optional[str]]:
+        """
+        Update per-position state: MFE, bars_since_entry, phase.
+
+        Returns (updated_state, phase, phase_transition_reason).
+        phase_transition_reason is non-None only when the phase just changed
+        from validation to participation this cycle.
+        """
+        if state is None:
+            # No persistent state — default to validation phase
+            return {}, 'validation', None
+
+        # Increment bars counter
+        bars_since_entry = state.get('bars_since_entry', 0) + 1
+        state = dict(state)  # copy — don't mutate the caller's dict
+        state['bars_since_entry'] = bars_since_entry
+
+        # Update MFE high/low
+        bar_high = float(latest.get('high', current_price or 0))
+        bar_low  = float(latest.get('low',  current_price or 0))
+
+        if side == 'buy':
+            prev_max = state.get('max_price_since_entry', current_entry or 0)
+            state['max_price_since_entry'] = max(prev_max, bar_high)
+        else:
+            prev_min = state.get('min_price_since_entry', current_entry or float('inf'))
+            state['min_price_since_entry'] = min(prev_min, bar_low)
+
+        # If already in participation phase, stay there
+        current_phase = state.get('phase', 'validation')
+        if current_phase == 'participation':
+            return state, 'participation', None
+
+        # Check transition conditions
+        initial_risk = state.get('initial_risk', 0)
+        entry_price  = state.get('entry_price', current_entry)
+        atr          = float(latest.get('atr_14', 0))
+
+        transition_reason = None
+
+        # Condition 1: MFE >= 1R
+        if initial_risk and initial_risk > 0 and entry_price is not None:
+            if side == 'buy':
+                mfe = state.get('max_price_since_entry', entry_price) - entry_price
+            else:
+                mfe = entry_price - state.get('min_price_since_entry', entry_price)
+            mfe_r = mfe / initial_risk
+            if mfe_r >= 1.0:
+                transition_reason = f"MFE >= 1R ({mfe_r:.2f}R)"
+
+        # Condition 2: 3 consecutive closes above EMA9 with slope rising
+        if transition_reason is None and 'ema_9' in bars.columns and len(bars) >= 3:
+            last3 = bars.tail(3)
+            ema9_vals = last3['ema_9']
+            closes    = last3['close']
+            slope     = float(latest.get('ema9_slope', 0) or 0)
+            if side == 'buy':
+                if all(closes.values > ema9_vals.values) and slope > 0:
+                    transition_reason = "3 consecutive closes above EMA9 with slope rising"
+            else:
+                if all(closes.values < ema9_vals.values) and slope < 0:
+                    transition_reason = "3 consecutive closes below EMA9 with slope falling"
+
+        # Condition 3: Close > entry + 1.0× ATR
+        if transition_reason is None and entry_price is not None and atr > 0:
+            close = float(latest.get('close', 0))
+            if side == 'buy' and close > entry_price + atr:
+                transition_reason = f"Close > entry + 1.0×ATR (${entry_price + atr:.2f})"
+            elif side == 'sell' and close < entry_price - atr:
+                transition_reason = f"Close < entry - 1.0×ATR (${entry_price - atr:.2f})"
+
+        if transition_reason:
+            state['phase'] = 'participation'
+            return state, 'participation', transition_reason
+
+        return state, 'validation', None
 
     # ── Momentum health ───────────────────────────────────────────────────────
 
@@ -370,7 +643,6 @@ class PositionReviewer:
         price_col = 'high' if side == 'buy' else 'low'
 
         # Find local swing highs (for longs) or swing lows (for shorts).
-        # A pivot at index i requires i-1 and i+1 to exist, so we search [1, n-2].
         pivots = []
         for i in range(1, len(recent) - 1):
             if side == 'buy':
@@ -385,7 +657,6 @@ class PositionReviewer:
         if len(pivots) < 2:
             return False
 
-        # Compare the last two swing pivots
         prev_idx = pivots[-2]
         last_idx = pivots[-1]
 
@@ -395,10 +666,8 @@ class PositionReviewer:
         last_rsi   = recent['rsi_14'].iloc[last_idx]
 
         if side == 'buy':
-            # Bearish divergence: price higher high, RSI lower high (min 3pt gap)
             return last_price > prev_price and last_rsi < prev_rsi - 3
         else:
-            # Bullish divergence for shorts: price lower low, RSI higher low (min 3pt gap)
             return last_price < prev_price and last_rsi > prev_rsi + 3
 
     # ── Stop / target computation ─────────────────────────────────────────────
@@ -419,10 +688,7 @@ class PositionReviewer:
           2. Never lower the stop below the current stop (stops only move in
              the direction of profit).
           3. If the position is in profit (current price > entry), floor the
-             stop at breakeven (entry price). A trailing stop that would leave
-             the trader with a loss is not a trailing stop — it's just a stop.
-
-        The symmetric rules apply for shorts.
+             stop at breakeven (entry price).
         """
         atr   = float(latest.get('atr_14', latest.get('close', 100) * 0.02))
         price = float(latest.get('close', 0))
@@ -430,19 +696,15 @@ class PositionReviewer:
         if side == 'buy':
             structural_low = float(bars['low'].tail(5).min())
             new_stop = round(structural_low - atr * 0.25, 2)
-            # Never lower the stop
             if current_stop is not None:
                 new_stop = max(new_stop, current_stop)
-            # If in profit, floor at breakeven so the stop can never produce a loss
             if current_entry is not None and price > current_entry:
                 new_stop = max(new_stop, current_entry)
         else:
             structural_high = float(bars['high'].tail(5).max())
             new_stop = round(structural_high + atr * 0.25, 2)
-            # Never raise the stop (for shorts, a higher stop = worse)
             if current_stop is not None:
                 new_stop = min(new_stop, current_stop)
-            # If in profit (price below entry for shorts), ceiling at breakeven
             if current_entry is not None and price < current_entry:
                 new_stop = min(new_stop, current_entry)
 
@@ -458,17 +720,13 @@ class PositionReviewer:
     ) -> tuple:
         """
         Compute a new (higher) target by re-running the signal logic on current bars.
-
-        Returns (new_target, new_stop). Falls back to a 2R extension from the
-        current price if the signal doesn't produce a clean target.
+        Returns (new_target, new_stop).
         """
-        atr = float(latest.get('atr_14', latest.get('close', 100) * 0.02))
+        atr   = float(latest.get('atr_14', latest.get('close', 100) * 0.02))
         price = float(latest.get('close', 0))
 
-        # Trail the stop first
         new_stop = self._compute_trailing_stop(bars, latest, current_entry, current_stop, side)
 
-        # Compute new target as 2R from current price using the new stop
         risk = abs(price - new_stop)
         if risk == 0:
             return None, new_stop
@@ -509,11 +767,10 @@ class PositionReviewer:
             return 'buy'
         if qty < 0:
             return 'sell'
-        # Fall back to checking orders
         for o in orders:
             if o.get('side') == 'buy':
                 return 'buy'
-        return 'buy'  # default to long
+        return 'buy'
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -525,13 +782,7 @@ class PositionReviewer:
         current_target: Optional[float],
         tolerance: float = 0.01,
     ) -> bool:
-        """
-        Return True if the suggested adjustment is already in place.
-
-        A suggestion is considered already applied when both the suggested stop
-        and suggested target are within `tolerance` dollars of the current
-        levels. If either suggestion is None, that leg is ignored.
-        """
+        """Return True if the suggested adjustment is already in place."""
         stop_ok = (
             suggested_stop is None
             or current_stop is None
@@ -565,7 +816,10 @@ class PositionReviewer:
         current_target: Optional[float],
         suggested_stop: Optional[float],
         suggested_target: Optional[float],
+        phase: str,
+        updated_state: Optional[dict],
         details: List[str],
+        phase_transition: Optional[str] = None,
     ) -> PositionReview:
         return PositionReview(
             symbol=symbol,
@@ -579,5 +833,8 @@ class PositionReviewer:
             suggested_target=suggested_target,
             unrealized_pl=position.get('unrealized_pl'),
             unrealized_plpc=position.get('unrealized_plpc'),
+            phase=phase,
+            phase_transition=phase_transition,
+            updated_position_state=updated_state,
             details=details,
         )

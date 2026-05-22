@@ -41,6 +41,107 @@ _GRADE_ORDER = {"A": 4, "B": 3, "C": 2, "D": 1}
 
 # ── State helpers ─────────────────────────────────────────────────────────────
 
+# ── Per-position state helpers ────────────────────────────────────────────────
+
+def _load_position_state(state: dict, symbol: str) -> dict | None:
+    """Return the per-position state dict for a symbol, or None if not found."""
+    return state.get("position_state", {}).get(symbol.upper())
+
+
+def _save_position_state(state: dict, symbol: str, pos_state: dict) -> None:
+    """Persist updated per-position state into the bot state dict."""
+    if "position_state" not in state:
+        state["position_state"] = {}
+    state["position_state"][symbol.upper()] = pos_state
+
+
+def _remove_position_state(state: dict, symbol: str) -> None:
+    """Remove per-position state when a position is closed."""
+    if "position_state" in state:
+        state["position_state"].pop(symbol.upper(), None)
+
+
+def _cleanup_stale_position_states(state: dict, open_symbols: set[str]) -> None:
+    """
+    Remove position state for any symbol that is no longer in open positions.
+    Prevents stale state from contaminating a future trade in the same symbol.
+    """
+    pos_states = state.get("position_state", {})
+    stale = [sym for sym in list(pos_states.keys()) if sym not in open_symbols]
+    for sym in stale:
+        pos_states.pop(sym, None)
+        logger.debug(f"Cleaned up stale position state for {sym}")
+
+
+def _init_position_state(
+    position: dict,
+    orders: list[dict],
+    trade_log: list[dict],
+) -> dict:
+    """
+    Build the initial per-position state dict when a position is first seen.
+
+    Reads entry_price, initial_stop_price, and breakout_level from the trade log
+    (written at order submission time).  Falls back to the position dict and
+    bracket orders if the trade log entry is missing.
+
+    initial_risk is computed as abs(entry_price - initial_stop_price).
+    If initial_risk <= 0, the state is still created but MFE-based phase
+    transitions will be skipped (guarded in _update_position_state).
+    """
+    sym = position.get("symbol", "").upper()
+
+    # Find the most recent trade log entry for this symbol (non-event entries only)
+    trade_entry = None
+    for t in reversed(trade_log):
+        if t.get("symbol", "").upper() == sym and not t.get("event"):
+            trade_entry = t
+            break
+
+    entry_price    = float(position.get("avg_entry_price") or 0)
+    initial_stop   = None
+    breakout_level = None
+
+    if trade_entry:
+        if trade_entry.get("entry_price"):
+            entry_price = float(trade_entry["entry_price"])
+        if trade_entry.get("stop_price"):
+            initial_stop = float(trade_entry["stop_price"])
+        if trade_entry.get("breakout_level"):
+            breakout_level = float(trade_entry["breakout_level"])
+
+    # Fall back to bracket order stop if not in trade log.
+    # Check the order itself first, then its legs.  Use a flag so the inner
+    # break also exits the outer loop — otherwise we'd continue iterating
+    # orders after finding a stop in a leg and potentially overwrite it.
+    if initial_stop is None:
+        for o in orders:
+            if o.get("type") in ("stop", "stop_limit") and o.get("stop_price"):
+                initial_stop = float(o["stop_price"])
+                break
+            for leg in (o.get("legs") or []):
+                if leg.get("type") in ("stop", "stop_limit") and leg.get("stop_price"):
+                    initial_stop = float(leg["stop_price"])
+                    break
+            if initial_stop is not None:
+                break
+
+    initial_risk = abs(entry_price - initial_stop) if initial_stop is not None else 0.0
+
+    current_price = float(position.get("current_price") or entry_price)
+
+    return {
+        "entry_price":           entry_price,
+        "breakout_level":        breakout_level or entry_price,
+        "initial_stop_price":    initial_stop,
+        "initial_risk":          initial_risk,
+        "bars_since_entry":      0,
+        "max_price_since_entry": current_price,
+        "min_price_since_entry": current_price,
+        "phase":                 "validation",
+    }
+
+
 def _load_state() -> dict:
     try:
         with open(_STATE_PATH) as f:
@@ -355,18 +456,39 @@ def run_position_review(bot, config, state: dict, timeframe: str) -> None:
             all_orders = bot.get_orders(status='open')
             sym_orders = [o for o in all_orders if o.get('symbol', '').upper() == sym]
 
-            result = reviewer.review(pos, sym_orders, data)
+            # Load per-position state (MFE, bars_since_entry, phase)
+            pos_state = _load_position_state(state, sym)
+
+            # Initialize state on first sight of this position
+            if not pos_state:
+                pos_state = _init_position_state(pos, sym_orders, trade_log)
+
+            result = reviewer.review(pos, sym_orders, data, position_state=pos_state)
             verdict = result.verdict
+
+            # Persist updated state (MFE, bars_since_entry, phase)
+            if result.updated_position_state:
+                _save_position_state(state, sym, result.updated_position_state)
+
+            # Log phase transition if it just happened
+            if result.phase_transition:
+                _log_action(
+                    "PHASE_TRANSITION", sym,
+                    {"from": "validation", "to": "participation", "reason": result.phase_transition},
+                    f"{sym}: validation → participation | {result.phase_transition}",
+                )
+                logger.info(f"{sym}: validation → participation | {result.phase_transition}")
 
             _log_action(
                 f"REVIEW_{verdict}", sym,
                 {
                     "timeframe":        pos_tf,
+                    "phase":            result.phase,
                     "suggested_stop":   result.suggested_stop,
                     "suggested_target": result.suggested_target,
                     "reason":           result.reason,
                 },
-                f"Verdict: {verdict}",
+                f"Verdict: {verdict} (phase={result.phase})",
             )
 
             if verdict == "TRAIL_STOP":
@@ -388,9 +510,15 @@ def run_position_review(bot, config, state: dict, timeframe: str) -> None:
                     {"reason": result.reason, "close_result": close_result},
                     close_result.get("status", "unknown"),
                 )
+                # Clean up position state when the position is closed
+                _remove_position_state(state, sym)
 
         except Exception as e:
             logger.error(f"Position review failed for {sym}: {e}")
+
+    # Clean up stale position state for symbols no longer in open positions
+    open_symbols = {p["symbol"].upper() for p in positions}
+    _cleanup_stale_position_states(state, open_symbols)
 
     _save_state(state)
 

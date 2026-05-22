@@ -302,14 +302,15 @@ class BacktestEngine:
 
         On each bar:
           1. Check bracket stop/target hit first (hard exits — always respected).
-          2. Run PositionReviewer on the enriched slice up to this bar.
+          2. Run PositionReviewer on the enriched slice up to this bar,
+             passing the current per-position state so the two-phase logic fires.
           3. EXIT verdict → close at this bar's close price (early exit).
           4. TRAIL_STOP / PARTIAL_PROFIT / RAISE_TARGET → update live stop/target.
           5. HOLD → continue.
 
-        The reviewer uses a synthetic position dict (entry, current_price = bar close,
-        unrealized P&L) and synthetic orders (current stop/target as bracket legs).
-        No real orders are involved — this is purely a simulation.
+        Per-position state is maintained in local variables — no file I/O.
+        The state mirrors what auto_manager.py persists in bot_state.json for
+        live trading, so the backtest exercises the same code path.
         """
         from strategies.position_manager import PositionReviewer
 
@@ -318,17 +319,32 @@ class BacktestEngine:
         live_stop   = stop
         live_target = target
 
+        # Initialise per-position state for the two-phase reviewer
+        initial_risk = abs(entry - stop)
+        pos_state = {
+            'entry_price':           entry,
+            'breakout_level':        entry,   # proxy — no separate breakout level in backtest
+            'initial_stop_price':    stop,
+            'initial_risk':          initial_risk,
+            'bars_since_entry':      0,
+            'max_price_since_entry': entry,
+            'min_price_since_entry': entry,
+            'phase':                 'validation',
+        }
+
         for j in range(start_i, n):
             row = bars.iloc[j]
             close_price = float(row['close'])
+            bar_high    = float(row['high'])
+            bar_low     = float(row['low'])
 
             # ── 1. Hard bracket check (stop/target hit this bar) ──────────────
             if action == 'buy':
-                stopped  = row['low']  <= live_stop
-                targeted = row['high'] >= live_target
+                stopped  = bar_low  <= live_stop
+                targeted = bar_high >= live_target
             else:
-                stopped  = row['high'] >= live_stop
-                targeted = row['low']  <= live_target
+                stopped  = bar_high >= live_stop
+                targeted = bar_low  <= live_target
 
             if stopped and targeted:
                 return 'loss', j, live_stop
@@ -337,7 +353,17 @@ class BacktestEngine:
             if targeted:
                 return 'win', j, live_target
 
-            # ── 2. Position review on this bar's close ────────────────────────
+            # ── 2. Update local MFE tracking ──────────────────────────────────
+            if action == 'buy':
+                pos_state['max_price_since_entry'] = max(
+                    pos_state['max_price_since_entry'], bar_high
+                )
+            else:
+                pos_state['min_price_since_entry'] = min(
+                    pos_state['min_price_since_entry'], bar_low
+                )
+
+            # ── 3. Position review on this bar's close ────────────────────────
             try:
                 synthetic_pos = {
                     'symbol':          '_backtest',
@@ -356,12 +382,15 @@ class BacktestEngine:
                     synthetic_pos,
                     synthetic_orders,
                     enriched.iloc[:j + 1],
+                    position_state=pos_state,
                 )
                 verdict = review.verdict
 
+                # Update local state from reviewer output
+                if review.updated_position_state:
+                    pos_state = review.updated_position_state
+
                 if verdict == 'EXIT':
-                    # Close at this bar's close price
-                    r = self._calc_r(entry, close_price, stop, action)
                     return 'early_exit', j, close_price
 
                 if verdict in ('TRAIL_STOP', 'PARTIAL_PROFIT', 'RAISE_TARGET'):

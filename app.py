@@ -561,16 +561,21 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
             order = bot.trading_client.submit_order(req)
 
             timeframe = data.get("timeframe", "long")
+            # breakout_level is the actual breakout price before any ATR buffer.
+            # The UI sends it when available (from the signal dict); fall back to
+            # entry_price if not provided so the field is always present.
+            breakout_level = float(data.get("breakout_level", entry_price))
             trade_info = {
-                "timestamp":  datetime.now().isoformat(),
-                "symbol":     symbol,
-                "side":       side,
-                "entry_type": entry_type,
-                "timeframe":  timeframe,
-                "quantity":   quantity,
-                "entry_price":  entry_price,
-                "stop_price":   stop_price,
-                "target_price": target_price,
+                "timestamp":     datetime.now().isoformat(),
+                "symbol":        symbol,
+                "side":          side,
+                "entry_type":    entry_type,
+                "timeframe":     timeframe,
+                "quantity":      quantity,
+                "entry_price":   entry_price,
+                "stop_price":    stop_price,
+                "target_price":  target_price,
+                "breakout_level": breakout_level,
                 "order_id": str(order.id),
                 "status":   order.status.value,
             }
