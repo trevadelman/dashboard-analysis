@@ -1468,6 +1468,10 @@ Rules: Use markdown headers. Be direct. Use actual numbers from the data. No dis
 
     # ── Watchlist ─────────────────────────────────────────────────────────────
 
+    @app.get("/bot", response_class=HTMLResponse)
+    async def bot_page(request: Request, _=Depends(login_required)):
+        return templates.TemplateResponse(request, "bot.html", {"active_page": "bot"})
+
     @app.get("/watchlist", response_class=HTMLResponse)
     async def watchlist_page(request: Request, _=Depends(login_required)):
         return templates.TemplateResponse(request, "watchlist.html", {"active_page": "watchlist"})

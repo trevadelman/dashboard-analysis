@@ -1,0 +1,51 @@
+{% extends "layout.html" %}
+
+{% block title %}Bot — Follow Through{% endblock %}
+
+{% block content %}
+<div class="page-content">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-bold flex items-center gap-2">
+                <i class="bi bi-robot text-primary"></i>
+                Autonomous Bot
+            </h1>
+            <p class="text-sm text-base-content/60 mt-1">
+                Scheduler status, job schedule, and action log.
+            </p>
+        </div>
+        <div class="flex items-center gap-2">
+            <button id="bot-pause-btn" class="btn btn-sm btn-ghost gap-1" onclick="toggleBotHalt()">
+                <i class="bi bi-pause-circle"></i> <span id="bot-pause-label">Pause</span>
+            </button>
+            <button class="btn btn-sm btn-ghost gap-1" onclick="loadBotStatus(); loadBotActions()">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Bot status card -->
+    <div id="bot-status-container">
+        <div class="flex justify-center py-10">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+        </div>
+    </div>
+
+    <!-- Action Log -->
+    <div class="mt-8">
+        <h2 class="text-lg font-bold flex items-center gap-2 mb-4">
+            <i class="bi bi-list-ul text-primary"></i>
+            Recent Bot Actions
+        </h2>
+        <div id="bot-actions-container">
+            <div class="flex justify-center py-6">
+                <span class="loading loading-spinner loading-md text-primary"></span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/bot.js"></script>
+{% endblock %}
