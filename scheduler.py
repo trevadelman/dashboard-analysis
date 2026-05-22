@@ -32,7 +32,8 @@ Crypto watchlist jobs (24/7 — no market-hours gates)
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+import math
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -45,6 +46,34 @@ _ET = ZoneInfo("America/New_York")
 
 # Module-level scheduler instance — started once, shared across the app
 _scheduler: BackgroundScheduler | None = None
+
+
+def _next_interval_boundary(interval_minutes: int) -> datetime:
+    """
+    Return the next clock time that falls on a multiple of interval_minutes.
+
+    Examples (interval_minutes=15):
+      now=09:10 → 09:15
+      now=09:15 → 09:30  (already on boundary → advance to next)
+      now=09:43 → 09:45
+
+    Examples (interval_minutes=60):
+      now=09:10 → 10:00
+      now=09:00 → 10:00  (already on boundary → advance to next)
+      now=09:58 → 10:00
+
+    The returned datetime is timezone-aware (ET).  APScheduler uses it as
+    start_date for IntervalTrigger so the job never fires before this time,
+    even on startup.
+    """
+    now = datetime.now(_ET)
+    # Total minutes since midnight
+    total_minutes = now.hour * 60 + now.minute
+    # Next boundary strictly after now
+    next_boundary_minutes = (math.floor(total_minutes / interval_minutes) + 1) * interval_minutes
+    # Build the boundary datetime (same day, zero seconds/microseconds)
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return midnight + timedelta(minutes=next_boundary_minutes)
 
 
 # ── Job wrappers ──────────────────────────────────────────────────────────────
@@ -216,8 +245,13 @@ def start(bot, config) -> BackgroundScheduler:
     )
 
     # ── Interval jobs — same cadence for both equity and crypto ───────────────
+    #
+    # start_date is set to the next clock boundary so jobs don't all fire
+    # simultaneously on startup/restart.  The exit poller is intentionally
+    # left without a start_date — it should fire immediately on startup to
+    # catch any exits that occurred while the bot was down.
 
-    # Every 5 min — exit detection poller
+    # Every 5 min — exit detection poller (fires immediately on startup)
     _scheduler.add_job(
         _job_exit_poller,
         IntervalTrigger(minutes=5),
@@ -228,10 +262,10 @@ def start(bot, config) -> BackgroundScheduler:
         misfire_grace_time=60,
     )
 
-    # Every 60 min — swing position review
+    # Every 60 min — swing position review (aligned to next :00 boundary)
     _scheduler.add_job(
         _job_swing_review,
-        IntervalTrigger(minutes=60),
+        IntervalTrigger(minutes=60, start_date=_next_interval_boundary(60)),
         args=[bot, config],
         id="swing_review",
         name="Swing position review",
@@ -239,10 +273,10 @@ def start(bot, config) -> BackgroundScheduler:
         misfire_grace_time=300,
     )
 
-    # Every 60 min — swing entry scan
+    # Every 60 min — swing entry scan (aligned to next :00 boundary)
     _scheduler.add_job(
         _job_swing_scan,
-        IntervalTrigger(minutes=60),
+        IntervalTrigger(minutes=60, start_date=_next_interval_boundary(60)),
         args=[bot, config],
         id="swing_scan",
         name="Swing timeframe entry scan",
@@ -250,10 +284,10 @@ def start(bot, config) -> BackgroundScheduler:
         misfire_grace_time=300,
     )
 
-    # Every 15 min — short position review
+    # Every 15 min — short position review (aligned to next :00/:15/:30/:45 boundary)
     _scheduler.add_job(
         _job_short_review,
-        IntervalTrigger(minutes=15),
+        IntervalTrigger(minutes=15, start_date=_next_interval_boundary(15)),
         args=[bot, config],
         id="short_review",
         name="Short position review",
@@ -261,10 +295,10 @@ def start(bot, config) -> BackgroundScheduler:
         misfire_grace_time=60,
     )
 
-    # Every 15 min — short entry scan
+    # Every 15 min — short entry scan (aligned to next :00/:15/:30/:45 boundary)
     _scheduler.add_job(
         _job_short_scan,
-        IntervalTrigger(minutes=15),
+        IntervalTrigger(minutes=15, start_date=_next_interval_boundary(15)),
         args=[bot, config],
         id="short_scan",
         name="Short timeframe entry scan",
