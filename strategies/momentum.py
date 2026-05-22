@@ -215,9 +215,13 @@ class SignalHierarchy:
         else:
             logger.info(f"{symbol} [{tf}]: No signal — blocked at {blocked_at}")
 
+        # Include the current price and regime in the done event so the
+        # dashboard can snapshot them for the watchlist without an extra fetch.
+        current_price = float(data.iloc[-1]['close']) if not data.empty else None
         yield {'type': 'done', 'timeframe': tf, 'symbol': symbol,
                'signals': [entry_signal] if signal_valid else [],
-               'audit': audit, 'blocked_at': blocked_at}
+               'audit': audit, 'blocked_at': blocked_at,
+               'regime': regime, 'price': current_price}
 
     def generate_signal(self, data: pd.DataFrame, symbol: str) -> Optional[Dict[str, Any]]:
         """Run stream_signal and return the final 'done' event."""

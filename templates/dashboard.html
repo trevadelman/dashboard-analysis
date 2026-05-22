@@ -80,7 +80,7 @@
                     <h2 class="card-title text-lg">
                         <i class="bi bi-graph-up"></i> Market Analysis
                     </h2>
-                    <div class="flex gap-2">
+                    <div class="flex gap-2 items-center">
                         <input type="text" id="symbol-input" class="input input-bordered input-sm w-24" value="SPY">
                         <select id="interval-input" class="select select-bordered select-sm w-20" onchange="loadChart()">
                             <option value="1d">1D</option>
@@ -90,6 +90,9 @@
                             <option value="1m">1m</option>
                         </select>
                         <button class="btn btn-primary btn-sm" onclick="runAnalysis()">Analyze</button>
+                        <button id="wl-add-btn" class="btn btn-ghost btn-sm gap-1 hidden" onclick="addCurrentToWatchlist()" title="Add to Watchlist">
+                            <i class="bi bi-bookmark-plus"></i>
+                        </button>
                     </div>
                 </div>
                 <div id="chart-container"></div>

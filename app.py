@@ -1466,6 +1466,103 @@ Rules: Use markdown headers. Be direct. Use actual numbers from the data. No dis
         blacklisted = toggle_blacklist(symbol)
         return {"symbol": symbol, "blacklisted": blacklisted}
 
+    # ── Watchlist ─────────────────────────────────────────────────────────────
+
+    @app.get("/watchlist", response_class=HTMLResponse)
+    async def watchlist_page(request: Request, _=Depends(login_required)):
+        return templates.TemplateResponse(request, "watchlist.html", {"active_page": "watchlist"})
+
+    @app.get("/api/watchlist")
+    async def api_watchlist_get(request: Request, _=Depends(login_required)):
+        """
+        Return all watchlist entries enriched with current data from the scan cache.
+
+        Each entry gets two extra fields:
+          current_score, current_grade, current_signal — from the latest scan cache
+          current_price — from the scan cache (best-effort; None if not cached)
+        """
+        from data.watchlist import load as wl_load
+        import json as _json
+        import os as _os
+
+        entries = wl_load()
+
+        # Load scan cache once for enrichment
+        cache_path = _os.path.normpath(
+            _os.path.join(_os.path.dirname(__file__), "data", "scan_cache.json")
+        )
+        cache_by_tf: dict = {}
+        if _os.path.exists(cache_path):
+            try:
+                with open(cache_path, "r") as f:
+                    raw = _json.load(f)
+                for tf in ("long", "swing", "short"):
+                    if isinstance(raw.get(tf), dict):
+                        cache_by_tf[tf] = raw[tf]
+            except Exception:
+                pass
+
+        enriched = []
+        for e in entries:
+            row = dict(e)
+            tf  = e.get("timeframe", "long")
+            sym = e.get("symbol", "")
+            cached = cache_by_tf.get(tf, {}).get(sym)
+            if cached:
+                row["current_score"]  = cached.get("score")
+                row["current_grade"]  = cached.get("grade")
+                row["current_signal"] = cached.get("signal")
+                row["current_price"]  = cached.get("price")
+            else:
+                row["current_score"]  = None
+                row["current_grade"]  = None
+                row["current_signal"] = None
+                row["current_price"]  = None
+            enriched.append(row)
+
+        return enriched
+
+    @app.post("/api/watchlist")
+    async def api_watchlist_add(request: Request, _=Depends(login_required)):
+        """Add a symbol snapshot to the watchlist."""
+        from data.watchlist import add as wl_add
+        body = await request.json()
+        try:
+            entry = wl_add(
+                symbol        = body.get("symbol", ""),
+                timeframe     = body.get("timeframe", "long"),
+                price_at_add  = body.get("price_at_add"),
+                score_at_add  = body.get("score_at_add"),
+                grade_at_add  = body.get("grade_at_add"),
+                signal_at_add = body.get("signal_at_add"),
+                tier1_at_add  = body.get("tier1_at_add"),
+                tier2_at_add  = body.get("tier2_at_add"),
+                notes         = body.get("notes", ""),
+            )
+            return entry
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=409)
+
+    @app.delete("/api/watchlist/{entry_id}")
+    async def api_watchlist_remove(entry_id: str, _=Depends(login_required)):
+        """Remove a watchlist entry by id."""
+        from data.watchlist import remove as wl_remove
+        found = wl_remove(entry_id)
+        if not found:
+            return JSONResponse({"error": "Entry not found"}, status_code=404)
+        return {"ok": True}
+
+    @app.patch("/api/watchlist/{entry_id}")
+    async def api_watchlist_update(entry_id: str, request: Request, _=Depends(login_required)):
+        """Update the notes field for a watchlist entry."""
+        from data.watchlist import update_notes as wl_update_notes
+        body  = await request.json()
+        notes = body.get("notes", "")
+        entry = wl_update_notes(entry_id, notes)
+        if entry is None:
+            return JSONResponse({"error": "Entry not found"}, status_code=404)
+        return entry
+
     return app
 
 

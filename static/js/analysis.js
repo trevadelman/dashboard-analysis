@@ -234,6 +234,11 @@ async function runAnalysis() {
                 if (container) container.insertAdjacentHTML('beforeend',
                     `<div class="alert alert-warning py-2 text-xs mb-1"><span>Blocked at: <strong>${event.blocked_at}</strong></span></div>`);
             }
+
+            // Accumulate per-timeframe done events for the watchlist snapshot.
+            // We use the 'long' timeframe as the primary snapshot (most stable).
+            if (!window._tfDoneEvents) window._tfDoneEvents = {};
+            window._tfDoneEvents[event.timeframe] = event;
         }
 
         if (event.type === 'summary') {
@@ -253,6 +258,24 @@ async function runAnalysis() {
                 const signalsContainer = document.getElementById('analysis-signals');
                 if (signalsContainer) signalsContainer.innerHTML = '';
             }
+
+            // Build the watchlist snapshot from the accumulated done events.
+            // Prefer the 'long' timeframe; fall back to whichever is available.
+            const tfDone = window._tfDoneEvents || {};
+            const primary = tfDone['long'] || tfDone['swing'] || tfDone['short'] || {};
+            const firstSig = (event.signals && event.signals.length > 0) ? event.signals[0] : null;
+            _onAnalysisComplete({
+                symbol:    symbol,
+                timeframe: primary.timeframe || 'long',
+                price:     primary.price     || null,
+                regime:    primary.regime    || null,
+                tier1:     primary.regime    || null,
+                tier2:     firstSig ? 'PASS' : null,
+                signal:    firstSig ? firstSig.side.toUpperCase() : 'NONE',
+                score:     null,   // not available from stream; scan cache has it
+                grade:     null,
+            });
+            window._tfDoneEvents = {};
 
             evtSource.close();
         }
@@ -371,6 +394,66 @@ async function refreshAll() {
     document.getElementById('loading-overlay').style.display = 'flex';
     await Promise.all([updateAccount(), updatePositions(), updateTrades(), loadConfig(), loadChart()]);
     document.getElementById('loading-overlay').style.display = 'none';
+}
+
+// ── Watchlist: Add to Watchlist button ───────────────────────────────────────
+
+// Snapshot of the last completed analysis — populated by the SSE stream handler.
+// Holds the data needed to snapshot a setup at the moment of adding.
+let _lastAnalysisSnapshot = null;
+
+// Called by the SSE stream when analysis completes.  Stores the snapshot and
+// shows the bookmark button so the user can add the symbol to the watchlist.
+function _onAnalysisComplete(snapshot) {
+    _lastAnalysisSnapshot = snapshot;
+    const btn = document.getElementById('wl-add-btn');
+    if (btn) btn.classList.remove('hidden');
+}
+
+async function addCurrentToWatchlist() {
+    const btn = document.getElementById('wl-add-btn');
+    if (!_lastAnalysisSnapshot) return;
+
+    const snap = _lastAnalysisSnapshot;
+    const payload = {
+        symbol:        snap.symbol,
+        timeframe:     snap.timeframe || 'long',
+        price_at_add:  snap.price,
+        score_at_add:  snap.score,
+        grade_at_add:  snap.grade,
+        signal_at_add: snap.signal,
+        tier1_at_add:  snap.tier1,
+        tier2_at_add:  snap.tier2,
+        notes:         '',
+    };
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span>';
+
+    try {
+        const res  = await fetch('/api/watchlist', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify(payload),
+        });
+        const data = await res.json();
+
+        if (!res.ok) {
+            // 409 = already on watchlist
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-bookmark-check-fill text-warning"></i>';
+            btn.title = data.error || 'Already on watchlist';
+            return;
+        }
+
+        btn.innerHTML = '<i class="bi bi-bookmark-check-fill text-success"></i>';
+        btn.title = 'Added to Watchlist ✓';
+        // Don't re-enable — symbol is now on the list; clicking again would 409
+    } catch (e) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-bookmark-plus"></i>';
+        btn.title = `Failed: ${e.message}`;
+    }
 }
 
 // ── URL ?symbol= pre-fill and auto-run ───────────────────────────────────────

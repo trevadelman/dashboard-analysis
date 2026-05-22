@@ -1,0 +1,82 @@
+{% extends "layout.html" %}
+
+{% block title %}Watchlist — Follow Through{% endblock %}
+
+{% block content %}
+<div class="page-content-wide">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-bold flex items-center gap-2">
+                <i class="bi bi-bookmark-star-fill text-primary"></i>
+                Watchlist
+            </h1>
+            <p class="text-sm text-base-content/60 mt-1">
+                Setups you're tracking. Snapshot scores are frozen at the time you added them —
+                current scores pull from the latest scan cache.
+            </p>
+        </div>
+        <div class="flex items-center gap-3">
+            <span class="badge badge-outline" id="wl-count">0</span>
+            <button class="btn btn-ghost btn-sm gap-1" onclick="loadWatchlist()" title="Refresh current data">
+                <i class="bi bi-arrow-clockwise"></i> Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Status message -->
+    <div id="wl-status" class="mb-3"></div>
+
+    <!-- Table card -->
+    <div class="card bg-base-100 shadow-xl">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-sm table-zebra w-full">
+                    <thead>
+                        <tr class="bg-base-200 text-xs">
+                            <th>Symbol</th>
+                            <th>Added</th>
+                            <th>TF</th>
+                            <th>Regime @ Add</th>
+                            <!-- Snapshot columns -->
+                            <th class="text-right border-l border-base-300">Price @ Add</th>
+                            <th class="text-right">Score @ Add</th>
+                            <th>Grade @ Add</th>
+                            <th>Signal @ Add</th>
+                            <!-- Current columns -->
+                            <th class="text-right border-l border-base-300">Current Price</th>
+                            <th class="text-right">Δ%</th>
+                            <th class="text-right">Current Score</th>
+                            <th>Current Grade</th>
+                            <th>Current Signal</th>
+                            <!-- Notes + actions -->
+                            <th>Notes</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody id="wl-body">
+                        <tr>
+                            <td colspan="15" class="text-center py-10 text-base-content/40 text-sm">
+                                Loading…
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Column legend -->
+            <div class="px-4 py-3 border-t border-base-200 flex flex-wrap gap-4 text-xs text-base-content/50">
+                <span><strong class="text-base-content/70">Score @ Add / Grade @ Add / Signal @ Add</strong> — frozen snapshot when you added the symbol</span>
+                <span><strong class="text-base-content/70">Current Score / Grade / Signal</strong> — from the latest scan cache (run a scan to refresh)</span>
+                <span><strong class="text-base-content/70">Δ%</strong> — price change since you added it</span>
+            </div>
+        </div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/watchlist.js"></script>
+{% endblock %}
