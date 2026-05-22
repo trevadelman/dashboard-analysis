@@ -443,8 +443,24 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
             period, interval = tf_cfg.get(timeframe, ('1y', '1d'))
             bars = bot.get_market_data(symbol, period=period, interval=interval)
 
+            # Load per-position state so the reviewer runs in the correct phase
+            # (validation vs participation).  Without this the UI always starts
+            # cold in validation phase and diverges from what the bot sees.
+            from strategies.auto_manager import (
+                _load_state, _load_position_state,
+                _save_position_state, _save_state,
+            )
+            bot_state = _load_state()
+            pos_state = _load_position_state(bot_state, symbol)
+
             reviewer = PositionReviewer(timeframe=timeframe)
-            review   = reviewer.review(position, orders, bars)
+            review   = reviewer.review(position, orders, bars, position_state=pos_state)
+
+            # Persist updated state (MFE, bars_since_entry, phase) so the UI
+            # review and the bot review stay in sync.
+            if review.updated_position_state:
+                _save_position_state(bot_state, symbol, review.updated_position_state)
+                _save_state(bot_state)
 
             # Serialize the dataclass to a plain dict and include the timeframe used
             result = asdict(review)
