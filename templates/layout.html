@@ -224,9 +224,9 @@
                     <div class="kv"><span class="k">9:30 ET Mon–Fri</span><span>Snapshot opening equity, reset daily halt.</span></div>
                     <div class="kv"><span class="k">9:35 ET Mon–Fri</span><span>Review long (daily) positions.</span></div>
                     <div class="kv"><span class="k">9:40 ET Mon–Fri</span><span>Scan for long signals.</span></div>
-                    <div class="kv"><span class="k">Every 15 min</span><span>Scan for short (15-min) signals during market hours.</span></div>
-                    <div class="kv"><span class="k">Every 60 min</span><span>Scan for swing signals + review swing positions during market hours.</span></div>
                     <div class="kv"><span class="k">Every 5 min</span><span>Exit detection poller (market hours).</span></div>
+                    <div class="kv"><span class="k">Every 15 min</span><span>Review short (15-min) positions + scan for short signals.</span></div>
+                    <div class="kv"><span class="k">Every 60 min</span><span>Review swing positions + scan for swing signals.</span></div>
 
                     <h3>Schedule (crypto watchlist)</h3>
                     <p>When the watchlist is set to <strong>All Crypto (Alpaca)</strong>, the bot switches to a 24/7 schedule. The three daily jobs fire at midnight ET every day (including weekends) instead of 9:30 ET Mon–Fri. Interval jobs (15-min, hourly, exit detection) run around the clock.</p>
