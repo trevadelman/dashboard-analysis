@@ -261,14 +261,19 @@ def check_circuit_breakers(bot, config, state: dict) -> tuple[bool, str]:
     if daily_open and daily_open > 0:
         try:
             account = bot.get_account()
-            equity  = account.get("equity", 0)
-            loss_pct = (daily_open - equity) / daily_open * 100
-            if loss_pct >= max_loss_pct:
-                reason = f"Max daily loss breached: down {loss_pct:.2f}% (limit {max_loss_pct}%)"
-                state["halted"] = True
-                _save_state(state)
-                _log_action("CIRCUIT_BREAKER", None, {"loss_pct": loss_pct, "limit": max_loss_pct}, reason)
-                return False, reason
+            equity  = account.get("equity")   # None if the API call failed
+            if equity is None:
+                # get_account() already logged the error; skip the loss check
+                # rather than computing against zero and triggering a false halt.
+                logger.warning("Circuit breaker: equity unavailable (API error) — skipping daily loss check")
+            else:
+                loss_pct = (daily_open - float(equity)) / daily_open * 100
+                if loss_pct >= max_loss_pct:
+                    reason = f"Max daily loss breached: down {loss_pct:.2f}% (limit {max_loss_pct}%)"
+                    state["halted"] = True
+                    _save_state(state)
+                    _log_action("CIRCUIT_BREAKER", None, {"loss_pct": loss_pct, "limit": max_loss_pct}, reason)
+                    return False, reason
         except Exception as e:
             logger.warning(f"Could not check daily loss: {e}")
 
