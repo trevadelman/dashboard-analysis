@@ -6,8 +6,10 @@
 <style>
     .sidebar      { width: var(--sidebar-width); position: fixed; top: var(--navbar-height); bottom: 0; left: 0; overflow-y: auto; z-index: 40; }
     .main-content { margin-left: var(--sidebar-width); padding: 1rem; }
-    #chart-container { height: 500px; width: 100%; position: relative; transition: height 0.3s ease; }
-    #chart-container.chart-compact { height: 250px; }
+    #chart-container { height: 500px; width: 100%; position: relative; transition: height 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+    #chart-container.chart-compact { height: 280px; }
+    #analysis-panel { max-height: 0; overflow: hidden; transition: max-height 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+    #analysis-panel.panel-open { max-height: 9999px; }
     #loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); display: none; justify-content: center; align-items: center; z-index: 2000; }
     @keyframes slideIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: translateY(0); } }
     .rotate-180 { transform: rotate(180deg); }
@@ -96,14 +98,12 @@
                     </div>
                 </div>
                 <div id="chart-container"></div>
-                <div class="p-4 bg-base-200 border-t border-base-300">
-                    <div id="analysis-results-content">
-                        <div class="text-center text-base-content/60 py-8">
-                            Enter a symbol and click Analyze to see multi-timeframe breakdown
-                        </div>
+                <div id="analysis-panel" class="bg-base-200 border-t border-base-300">
+                    <div class="p-4">
+                        <div id="analysis-results-content"></div>
+                        <!-- Consolidated AI commentary — hidden until the stream delivers it -->
+                        <div id="analysis-ai-commentary" class="hidden mt-2"></div>
                     </div>
-                    <!-- Consolidated AI commentary — hidden until the stream delivers it -->
-                    <div id="analysis-ai-commentary" class="hidden mt-2"></div>
                 </div>
             </div>
         </div>

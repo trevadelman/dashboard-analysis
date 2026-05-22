@@ -161,9 +161,10 @@ async function runAnalysis() {
     const output = document.getElementById('analysis-results-content');
     window.currentSymbol = symbol;
 
-    // Compact the chart to half height so analysis results are visible without scrolling
+    // Compact the chart and open the analysis panel
     document.getElementById('chart-container')?.classList.add('chart-compact');
-    if (window._chartInstance) window._chartInstance.applyOptions({ height: 250 });
+    if (window._chartInstance) window._chartInstance.applyOptions({ height: 280 });
+    document.getElementById('analysis-panel')?.classList.add('panel-open');
 
     // Reset the consolidated AI commentary container
     const aiWrap = document.getElementById('analysis-ai-commentary');
