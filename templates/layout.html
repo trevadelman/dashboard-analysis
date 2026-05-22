@@ -211,6 +211,9 @@
 
                 <!-- ── Autonomous Bot ─────────────────────────────────────── -->
                 <div id="hpanel-bot" class="help-prose hidden">
+                    <h3>Bot page</h3>
+                    <p>The <strong>Bot</strong> page (under Manage in the nav) is the dedicated control center for the autonomous scheduler. It shows running/halted/auto-entry status, today's action count, daily open equity snapshot, scheduled job next-run times, and a log of the last 50 bot actions. Use the <strong>Pause / Resume</strong> button at the top to manually halt or resume the bot without restarting the app.</p>
+
                     <h3>Decision flow</h3>
                     <p>The bot runs on a fixed schedule. Every job follows this sequence:</p>
                     <ul>
@@ -242,13 +245,10 @@
                     <p>The bot always submits <strong>bracket orders</strong> — a limit entry with a stop loss and take profit baked in. If the bot goes offline, your stops remain active on Alpaca's servers.</p>
 
                     <h3>Circuit breaker</h3>
-                    <p>Triggered automatically when the daily loss limit is breached, or manually via the <strong>Pause</strong> button on the Positions page. Resets at the next market open (or midnight for crypto).</p>
+                    <p>Triggered automatically when the daily loss limit is breached, or manually via the <strong>Pause</strong> button on the Bot page. Resets at the next market open (or midnight for crypto).</p>
 
                     <h3>Per-position blacklist</h3>
-                    <p>Each position card has a <strong>Bot Managed</strong> toggle immediately to the right of the "Position Review" heading. When toggled off, the bot skips that symbol entirely — it will not trail the stop, force an exit, or enter a new position on that symbol. The blacklist persists across server restarts. Use this when you want to manage a position manually without interference from the bot's automated review loop.</p>
-
-                    <h3>Monitoring</h3>
-                    <p>All bot activity is visible on the <strong>Positions</strong> page — the Autonomous Bot section shows running/halted status, scheduled job next-run times, and the last 20 actions with timestamps.</p>
+                    <p>Each position card on the <strong>Positions</strong> page has a <strong>Bot Managed</strong> toggle immediately to the right of the "Position Review" heading. When toggled off, the bot skips that symbol entirely — it will not trail the stop, force an exit, or enter a new position on that symbol. The blacklist persists across server restarts. Use this when you want to manage a position manually without interference from the bot's automated review loop.</p>
                 </div>
 
                 <!-- ── Positions ──────────────────────────────────────────── -->
@@ -279,14 +279,11 @@
                     <h3>Bot Managed toggle</h3>
                     <p>Each position card has a <strong>Bot Managed</strong> toggle immediately to the right of the "Position Review" heading. When toggled on (blue), the autonomous bot will trail stops, force exits, and consider new entries on that symbol as normal. When toggled off, the bot skips that symbol entirely — useful when you want to manage a position manually without the bot interfering. The state persists across server restarts. A robot icon in the collapsed card header also reflects the current state (red outline = blacklisted).</p>
 
-                    <h3>Autonomous Bot section</h3>
-                    <p>Shows the bot's running/halted/auto-entry status, today's action count, daily open equity snapshot, and a table of scheduled jobs with their next run times. Use the <strong>Pause / Resume</strong> button to manually halt or resume the bot.</p>
-
-                    <h3>Recent Bot Actions</h3>
-                    <p>A log of the last 20 bot actions: Entry, Trail Stop, Exit Detected, Circuit Breaker, etc. — with timestamp, action type, symbol, and result summary.</p>
-
                     <h3>Trade History</h3>
                     <p>All entries and exits logged by the app (both manual and bot-placed). Shows symbol, side, timeframe, date, quantity, entry/stop/target/exit prices, P&amp;L, and status (Open / Stop Hit / Target Hit / Manual close).</p>
+
+                    <h3>Bot monitoring</h3>
+                    <p>Bot status, scheduled jobs, and the action log have moved to the dedicated <strong>Bot</strong> page (Manage → Bot in the nav). Use that page to pause/resume the bot and review recent activity.</p>
                 </div>
 
                 <!-- ── Backtest ───────────────────────────────────────────── -->
