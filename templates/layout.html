@@ -53,7 +53,7 @@
 
     <!-- ── Help / Docs modal ──────────────────────────────────────────────── -->
     <dialog id="help-modal" class="modal">
-        <div class="modal-box w-11/12 max-w-3xl h-[85vh] overflow-hidden flex flex-col">
+        <div class="modal-box w-11/12 max-w-5xl h-[85vh] overflow-hidden flex flex-col">
             <form method="dialog">
                 <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
             </form>
@@ -69,7 +69,8 @@
                 <a role="tab" class="tab text-xs"             id="htab-pulse"    onclick="switchHelpTab('pulse')">Market Pulse</a>
                 <a role="tab" class="tab text-xs"             id="htab-bot"      onclick="switchHelpTab('bot')">Autonomous Bot</a>
                 <a role="tab" class="tab text-xs"             id="htab-positions" onclick="switchHelpTab('positions')">Positions</a>
-                <a role="tab" class="tab text-xs"             id="htab-backtest" onclick="switchHelpTab('backtest')">Backtest</a>
+                <a role="tab" class="tab text-xs"             id="htab-backtest"   onclick="switchHelpTab('backtest')">Backtest</a>
+                <a role="tab" class="tab text-xs"             id="htab-watchlist"  onclick="switchHelpTab('watchlist')">Watchlist</a>
             </div>
 
             <!-- Scrollable content area with bottom fade indicator -->
@@ -319,6 +320,41 @@
                     </ul>
                 </div>
 
+                <!-- ── Watchlist ─────────────────────────────────────────── -->
+                <div id="hpanel-watchlist" class="help-prose hidden">
+                    <h3>What is the Watchlist?</h3>
+                    <p>The Watchlist is a personal tracking list for setups you want to monitor over time. When you run analysis on a symbol and want to keep an eye on it, click the <strong>bookmark icon</strong> (top-right of the Analysis Dashboard) to snapshot the setup and add it to the list.</p>
+
+                    <h3>Adding a symbol</h3>
+                    <p>After running a multi-timeframe analysis, a bookmark button appears in the dashboard header. Clicking it saves a snapshot of the current setup — price, scores across all three timeframes, best grade, and signal — at that exact moment. Each symbol can only appear once on the list.</p>
+
+                    <h3>Snapshot columns (frozen at add time)</h3>
+                    <div class="kv"><span class="k">Price @ Add</span><span>The last bar's close price when you added the symbol.</span></div>
+                    <div class="kv"><span class="k">Score L/S/15m</span><span>Composite scores for Long (Daily) / Swing (Hourly) / Short (15-min) timeframes at the time of adding. Format: <code>72/58/41</code>. A dash means no scan data was available for that timeframe.</span></div>
+                    <div class="kv"><span class="k">Grade</span><span>Best grade across all three timeframes at add time. A = 80+, B = 60+, C = 40+, D = below 40.</span></div>
+                    <div class="kv"><span class="k">Signal</span><span>BUY or SELL if any timeframe had an active signal when you added it; NONE otherwise.</span></div>
+
+                    <h3>Current columns (from scan cache)</h3>
+                    <p>These columns update whenever you run a scan. They reflect the <em>latest</em> scan cache values — not live prices.</p>
+                    <div class="kv"><span class="k">Current Price</span><span>Price from the most recent scan (Long timeframe preferred).</span></div>
+                    <div class="kv"><span class="k">Δ%</span><span>Price change from when you added the symbol to the current cached price. Green = up, red = down.</span></div>
+                    <div class="kv"><span class="k">Score L/S/15m</span><span>Current slash-lined scores from the latest scan cache across all three timeframes.</span></div>
+                    <div class="kv"><span class="k">Grade</span><span>Best current grade across all three timeframes.</span></div>
+                    <div class="kv"><span class="k">Signal</span><span>Current signal from the latest scan. BUY/SELL if any timeframe is triggering.</span></div>
+
+                    <h3>Notes</h3>
+                    <p>Each row has an inline notes field. Click it to type, then press Enter or click away to save. Notes persist across sessions.</p>
+
+                    <h3>Navigating to analysis</h3>
+                    <p>Click any symbol in the list to open it in the Analysis Dashboard with the symbol pre-filled and analysis auto-running.</p>
+
+                    <h3>Refreshing current data</h3>
+                    <p>Click the <strong>Refresh</strong> button at the top of the page to reload the watchlist and pull the latest values from the scan cache. To get truly fresh data, run a new scan from the Market Scanner first.</p>
+
+                    <h3>Removing a symbol</h3>
+                    <p>Click the trash icon at the end of any row to remove it from the watchlist. This cannot be undone.</p>
+                </div>
+
             </div><!-- end scrollable -->
         </div>
         <form method="dialog" class="modal-backdrop"><button>close</button></form>
@@ -326,7 +362,7 @@
 
     <script>
     function switchHelpTab(tab) {
-        ['overview','scanner','analysis','pulse','bot','positions','backtest'].forEach(t => {
+        ['overview','scanner','analysis','pulse','bot','positions','backtest','watchlist'].forEach(t => {
             document.getElementById(`hpanel-${t}`).classList.toggle('hidden', t !== tab);
             document.getElementById(`htab-${t}`).classList.toggle('tab-active', t === tab);
         });
