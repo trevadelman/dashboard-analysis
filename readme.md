@@ -1,6 +1,6 @@
 # Alpaca Trading Dashboard
 
-A personal trading dashboard built on Flask, Alpaca Markets, and a local or cloud AI model. Provides multi-timeframe technical analysis, a batch market scanner, autonomous position management, and one-click bracket order execution — all from a clean web UI.
+A personal trading dashboard built on FastAPI, Alpaca Markets, and a local or cloud AI model. Provides multi-timeframe technical analysis, a batch market scanner, autonomous position management, and one-click bracket order execution — all from a clean web UI.
 
 ---
 
@@ -27,11 +27,21 @@ A personal trading dashboard built on Flask, Alpaca Markets, and a local or clou
 
 ```
 alpacaApp/
-├── app.py                  # Flask entry point — routes, SSE endpoints, auth
+├── app.py                  # FastAPI app factory — mounts routes/, middleware, scheduler
 ├── bot.py                  # TradingBot — market data, account, order execution
 ├── config.py               # Runtime config (reads from settings store, falls back to env)
 ├── ai_strategy.py          # AIStrategyGenerator (OpenAI-compatible client)
 ├── scheduler.py            # APScheduler — registers all background bot jobs
+│
+├── routes/                 # FastAPI APIRouter modules (one domain per file)
+│   ├── pages.py            # HTML page routes (/, /scanner, /positions, /bot, etc.)
+│   ├── account.py          # /api/account, /api/orders, /api/trades, /api/profiles, /api/market_data
+│   ├── positions.py        # /api/positions/*, /api/execute_trade
+│   ├── scanner.py          # /api/scan/*, /api/market/*, /api/analyze/*, /api/config
+│   ├── bot_control.py      # /api/bot/*, /api/alerts
+│   ├── settings.py         # /api/settings, /api/settings/test-ai
+│   ├── backtest.py         # /api/backtest
+│   └── watchlist.py        # /api/watchlist/*
 │
 ├── analysis/
 │   ├── indicators.py       # Technical indicators (EMA, RSI, BB, ATR, RVOL, RS)
@@ -52,8 +62,14 @@ alpacaApp/
 │
 ├── data/
 │   ├── bar_fetcher.py      # Batch bar fetching helpers (equity + crypto)
+│   ├── high_quality_setups.py  # High-quality setup alert log (score ≥ 85)
 │   ├── profile_store.py    # SQLite + Fernet encrypted Alpaca credential profiles
-│   └── settings_store.py   # SQLite key/value app settings (AI, risk, password, blacklist)
+│   ├── settings_store.py   # SQLite key/value app settings (AI, risk, password, blacklist)
+│   └── watchlist.py        # Persistent watchlist store
+│
+├── docs/
+│   ├── bot_behavior.md     # Autonomous bot phase logic and decision tree
+│   └── strategy.md         # Signal hierarchy and scoring documentation
 │
 ├── templates/              # Jinja2 HTML templates (DaisyUI + Tailwind)
 └── static/
@@ -65,8 +81,10 @@ alpacaApp/
         ├── account.js      # Account summary widget
         ├── market.js       # Market overview page
         ├── backtest.js     # Backtester UI
+        ├── bot.js          # Autonomous bot control panel
         ├── config.js       # Strategy parameter editor
-        └── settings.js     # Settings modal — profiles, AI, app settings
+        ├── settings.js     # Settings modal — profiles, AI, app settings
+        └── watchlist.js    # Watchlist page
 ```
 
 ---
