@@ -59,20 +59,24 @@ class BacktestEngine:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def run(self, symbol: str, timeframe: str = 'long', period: str = '1y') -> dict:
+    def run(self, symbol: str, timeframe: str = 'long', period: str = '1y',
+            use_position_review: bool = False) -> dict:
         """
         Run a walk-forward backtest.
 
         Args:
-            symbol:    Ticker symbol (e.g. 'CLSK')
-            timeframe: 'long', 'swing', or 'short' — maps to the same defaults
-                       as SignalHierarchy
-            period:    Lookback period string ('1mo', '3mo', '6mo', '1y', '2y', '3y', '5y')
+            symbol:               Ticker symbol (e.g. 'CLSK')
+            timeframe:            'long', 'swing', or 'short'
+            period:               Lookback period string ('1mo', '3mo', '6mo', '1y', '2y', '3y', '5y')
+            use_position_review:  If True, run PositionReviewer bar-by-bar after entry.
+                                  EXIT verdicts close early; TRAIL_STOP verdicts update the stop.
+                                  Default False (bracket-only mode).
 
         Returns:
             {
                 symbol, timeframe, period,
                 total_bars, signals_generated,
+                use_position_review,
                 summary: { total, wins, losses, timeouts, win_rate, loss_rate,
                            avg_win_r, avg_loss_r, expectancy, total_r,
                            max_drawdown_r },
@@ -97,17 +101,19 @@ class BacktestEngine:
         # where n can be 3,000–50,000 bars.
         enriched = self._precompute_indicators(bars, spy_bars)
 
-        trades = self._walk_forward(bars, enriched, timeframe)
+        trades = self._walk_forward(bars, enriched, timeframe,
+                                    use_position_review=use_position_review)
         summary = self._summarise(trades)
 
         return {
-            'symbol':            symbol,
-            'timeframe':         timeframe,
-            'period':            period,
-            'total_bars':        len(bars),
-            'signals_generated': len(trades),
-            'summary':           summary,
-            'trades':            trades,
+            'symbol':               symbol,
+            'timeframe':            timeframe,
+            'period':               period,
+            'total_bars':           len(bars),
+            'signals_generated':    len(trades),
+            'use_position_review':  use_position_review,
+            'summary':              summary,
+            'trades':               trades,
         }
 
     # ── Data fetching ─────────────────────────────────────────────────────────
@@ -199,7 +205,7 @@ class BacktestEngine:
     # ── Walk-forward loop ─────────────────────────────────────────────────────
 
     def _walk_forward(self, bars: pd.DataFrame, enriched: pd.DataFrame,
-                      timeframe: str) -> list[dict]:
+                      timeframe: str, use_position_review: bool = False) -> list[dict]:
         """
         Iterate bar by bar.  At each bar, pass enriched.iloc[:i+1] to
         SignalHierarchy — this is a zero-copy slice of the pre-computed
@@ -207,6 +213,10 @@ class BacktestEngine:
 
         We skip bars that are within the hold period of an already-open trade
         (no pyramiding — one position at a time).
+
+        When use_position_review=True, after entry the PositionReviewer is run
+        on each subsequent bar.  EXIT verdicts close the trade at the next bar's
+        open; TRAIL_STOP verdicts update the live stop level.
         """
         trades = []
         n = len(bars)
@@ -239,9 +249,15 @@ class BacktestEngine:
                 continue
 
             # Walk forward from bar i+1 to find outcome
-            outcome, exit_bar, exit_price = self._find_outcome(
-                bars, i + 1, entry, stop, target, signal['action']
-            )
+            if use_position_review:
+                outcome, exit_bar, exit_price = self._find_outcome_with_review(
+                    bars, enriched, i + 1, entry, stop, target,
+                    signal['action'], timeframe,
+                )
+            else:
+                outcome, exit_bar, exit_price = self._find_outcome(
+                    bars, i + 1, entry, stop, target, signal['action']
+                )
 
             bars_held  = exit_bar - i if exit_bar is not None else n - 1 - i
             r_multiple = self._calc_r(entry, exit_price, stop, signal['action']) \
@@ -269,6 +285,98 @@ class BacktestEngine:
             i = in_trade_until + 1
 
         return trades
+
+    def _find_outcome_with_review(
+        self,
+        bars: pd.DataFrame,
+        enriched: pd.DataFrame,
+        start_i: int,
+        entry: float,
+        stop: float,
+        target: float,
+        action: str,
+        timeframe: str,
+    ) -> tuple[str, int | None, float | None]:
+        """
+        Walk forward bar-by-bar with PositionReviewer running on each bar.
+
+        On each bar:
+          1. Check bracket stop/target hit first (hard exits — always respected).
+          2. Run PositionReviewer on the enriched slice up to this bar.
+          3. EXIT verdict → close at this bar's close price (early exit).
+          4. TRAIL_STOP / PARTIAL_PROFIT / RAISE_TARGET → update live stop/target.
+          5. HOLD → continue.
+
+        The reviewer uses a synthetic position dict (entry, current_price = bar close,
+        unrealized P&L) and synthetic orders (current stop/target as bracket legs).
+        No real orders are involved — this is purely a simulation.
+        """
+        from strategies.position_manager import PositionReviewer
+
+        reviewer = PositionReviewer(timeframe=timeframe)
+        n = len(bars)
+        live_stop   = stop
+        live_target = target
+
+        for j in range(start_i, n):
+            row = bars.iloc[j]
+            close_price = float(row['close'])
+
+            # ── 1. Hard bracket check (stop/target hit this bar) ──────────────
+            if action == 'buy':
+                stopped  = row['low']  <= live_stop
+                targeted = row['high'] >= live_target
+            else:
+                stopped  = row['high'] >= live_stop
+                targeted = row['low']  <= live_target
+
+            if stopped and targeted:
+                return 'loss', j, live_stop
+            if stopped:
+                return 'loss', j, live_stop
+            if targeted:
+                return 'win', j, live_target
+
+            # ── 2. Position review on this bar's close ────────────────────────
+            try:
+                synthetic_pos = {
+                    'symbol':          '_backtest',
+                    'qty':             1 if action == 'buy' else -1,
+                    'avg_entry_price': entry,
+                    'current_price':   close_price,
+                    'unrealized_pl':   (close_price - entry) if action == 'buy' else (entry - close_price),
+                    'unrealized_plpc': ((close_price - entry) / entry) if action == 'buy' else ((entry - close_price) / entry),
+                }
+                # Synthetic bracket legs so the reviewer can read stop/target
+                synthetic_orders = [
+                    {'type': 'stop',  'stop_price':  live_stop,   'side': 'sell' if action == 'buy' else 'buy'},
+                    {'type': 'limit', 'limit_price': live_target, 'side': 'sell' if action == 'buy' else 'buy'},
+                ]
+                review = reviewer.review(
+                    synthetic_pos,
+                    synthetic_orders,
+                    enriched.iloc[:j + 1],
+                )
+                verdict = review.verdict
+
+                if verdict == 'EXIT':
+                    # Close at this bar's close price
+                    r = self._calc_r(entry, close_price, stop, action)
+                    return 'early_exit', j, close_price
+
+                if verdict in ('TRAIL_STOP', 'PARTIAL_PROFIT', 'RAISE_TARGET'):
+                    if review.suggested_stop is not None:
+                        if action == 'buy':
+                            live_stop = max(live_stop, review.suggested_stop)
+                        else:
+                            live_stop = min(live_stop, review.suggested_stop)
+                    if review.suggested_target is not None:
+                        live_target = review.suggested_target
+
+            except Exception as e:
+                logger.debug(f'BacktestEngine: reviewer error at bar {j}: {e}')
+
+        return 'timeout', None, None
 
     def _generate_signal(self, enriched_slice: pd.DataFrame,
                          timeframe: str) -> dict | None:

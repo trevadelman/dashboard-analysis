@@ -8,9 +8,10 @@ let _btResult = null;
 // ── Run ───────────────────────────────────────────────────────────────────────
 
 async function runBacktest() {
-    const symbol    = document.getElementById('bt-symbol').value.trim().toUpperCase();
-    const timeframe = document.getElementById('bt-timeframe').value;
-    const period    = document.getElementById('bt-period').value;
+    const symbol             = document.getElementById('bt-symbol').value.trim().toUpperCase();
+    const timeframe          = document.getElementById('bt-timeframe').value;
+    const period             = document.getElementById('bt-period').value;
+    const usePositionReview  = document.getElementById('bt-use-review').checked;
 
     if (!symbol) return;
 
@@ -22,7 +23,7 @@ async function runBacktest() {
         const res  = await fetch('/api/backtest', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ symbol, timeframe, period }),
+            body:    JSON.stringify({ symbol, timeframe, period, use_position_review: usePositionReview }),
         });
         const data = await res.json();
 
@@ -69,7 +70,7 @@ function renderSummary(data) {
             <div class="stat">
                 <div class="stat-title">Trades</div>
                 <div class="stat-value text-xl">${s.total}</div>
-                <div class="stat-desc">${s.wins}W / ${s.losses}L / ${s.timeouts} open</div>
+                <div class="stat-desc">${s.wins}W / ${s.losses}L / ${s.timeouts} open${data.use_position_review ? ' · <span class="text-info">+reviewer</span>' : ''}</div>
             </div>
             <div class="stat">
                 <div class="stat-title">Win Rate</div>
@@ -178,7 +179,9 @@ function renderTradesTable(trades) {
             ? 'badge-success'
             : t.outcome === 'loss'
                 ? 'badge-error'
-                : 'badge-warning';
+                : t.outcome === 'early_exit'
+                    ? 'badge-info'
+                    : 'badge-warning';
         const rClass = t.r_multiple > 0 ? 'text-success' : t.r_multiple < 0 ? 'text-error' : '';
         const rSign  = t.r_multiple > 0 ? '+' : '';
         const date   = t.date ? t.date.slice(0, 10) : '—';

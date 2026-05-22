@@ -601,8 +601,10 @@ def create_dashboard(bot: TradingBot) -> FastAPI:
             symbol    = data.get("symbol", "SPY").upper().strip()
             timeframe = data.get("timeframe", "long")
             period    = data.get("period", "1y")
+            use_position_review = bool(data.get("use_position_review", False))
             engine = BacktestEngine(bot.data_client)
-            result = engine.run(symbol=symbol, timeframe=timeframe, period=period)
+            result = engine.run(symbol=symbol, timeframe=timeframe, period=period,
+                                use_position_review=use_position_review)
             return result
         except Exception as e:
             logger.error(f"Backtest error: {e}")
