@@ -46,9 +46,31 @@ class Config:
         self.OLLAMA_MODEL    = get_setting("ai_model")
 
         # ── Risk management (from settings store) ─────────────────────────────
-        self.MAX_POSITIONS    = int(get_setting("max_positions") or "5")
-        self.RISK_PERCENTAGE  = float(get_setting("risk_percentage") or "2.0")
+        # MAX_POSITIONS is a hard safety rail (not the primary constraint).
+        # The primary constraint is BOT_MAX_PORTFOLIO_HEAT_PCT — total open risk
+        # as a % of equity.  Position count is an output, not an input.
+        self.MAX_POSITIONS    = int(get_setting("max_positions") or "12")
+        self.RISK_PERCENTAGE  = float(get_setting("risk_percentage") or "1.0")
         self.MAX_POSITION_PCT = float(get_setting("max_position_pct") or "20.0")
+
+        # Heat-based portfolio management
+        # BOT_MAX_PORTFOLIO_HEAT_PCT: total open risk budget as % of equity.
+        #   Each open position contributes |entry - stop| × qty / equity.
+        #   New entries are blocked when current heat ≥ this limit.
+        self.BOT_MAX_PORTFOLIO_HEAT_PCT = float(
+            get_setting("bot_max_portfolio_heat_pct") or os.getenv("BOT_MAX_PORTFOLIO_HEAT_PCT", "5.0")
+        )
+        # BOT_MAX_RISK_PER_TRADE_PCT: per-trade risk cap as % of equity.
+        #   Prevents any single trade from consuming the entire heat budget.
+        self.BOT_MAX_RISK_PER_TRADE_PCT = float(
+            get_setting("bot_max_risk_per_trade_pct") or os.getenv("BOT_MAX_RISK_PER_TRADE_PCT", "1.0")
+        )
+        # BOT_MIN_RISK_PCT: minimum implied risk for an entry to be worth taking.
+        #   If the position cap squeezes the position to < this % of equity,
+        #   skip the entry — it can't move the needle on the account.
+        self.BOT_MIN_RISK_PCT = float(
+            get_setting("bot_min_risk_pct") or os.getenv("BOT_MIN_RISK_PCT", "0.25")
+        )
 
         # ── Autonomous bot (settings store; .env is fallback for bootstrap) ──
         self.BOT_AUTONOMOUS = (

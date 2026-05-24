@@ -561,6 +561,31 @@ def _grade_passes_minimum(grade: str | None, min_grade: str) -> bool:
     return _GRADE_ORDER.get(grade, 0) >= _GRADE_ORDER.get(min_grade, 0)
 
 
+def _compute_per_trade_risk(
+    config,
+    current_heat: float,
+    equity: float,
+) -> float | None:
+    """
+    Derive the per-trade risk percentage from the remaining heat budget.
+
+    Returns the risk % to pass to calculate_position_size, or None if the
+    heat budget is exhausted (caller should block the entry).
+
+    The per-trade risk is the lesser of:
+      - The remaining heat budget (max_heat - current_heat)
+      - The configured per-trade cap (BOT_MAX_RISK_PER_TRADE_PCT)
+
+    This ensures a single trade never consumes the entire heat budget and
+    that sizing scales down naturally as the portfolio fills up.
+    """
+    max_heat      = config.BOT_MAX_PORTFOLIO_HEAT_PCT
+    remaining     = max_heat - current_heat
+    if remaining <= 0:
+        return None
+    return min(remaining, config.BOT_MAX_RISK_PER_TRADE_PCT)
+
+
 def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
     """
     Scan the configured watchlist for new signals on the given timeframe.
@@ -574,8 +599,10 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
       5. Per-symbol entry cooldown
       6. Grade filter (BOT_MIN_GRADE)
       7. Tier 4 R:R check (passes_risk_checks)
-      8. can_trade() — position count, existing position, pending orders
-      9. Pending-entries guard — prevents exceeding max_positions within one cycle
+      8. Portfolio heat budget (BOT_MAX_PORTFOLIO_HEAT_PCT)
+      9. Minimum risk floor (BOT_MIN_RISK_PCT)
+     10. can_trade() — position count, existing position, pending orders
+     11. Pending-entries guard — prevents exceeding max_positions within one cycle
     """
     from screeners.market_scanner import MarketScanner
     from strategies.momentum import SignalHierarchy
@@ -676,9 +703,10 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
             # Tier 4: R:R and price validity check.
             # The scanner only runs Tier 1 + Tier 2 for speed.  We must run
             # Tier 4 here before committing real capital.
+            side = "buy" if signal == "BUY" else "sell"
             signal_dict = {
                 "symbol":       sym,
-                "side":         "buy" if signal == "BUY" else "sell",
+                "side":         side,
                 "entry_price":  entry_price,
                 "stop_price":   stop_price,
                 "target_price": target_price,
@@ -693,48 +721,100 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
                 )
                 continue
 
-            quantity = bot.calculate_position_size(entry_price, stop_price)
-            if quantity < 1:
-                # Risk parameters require less than 1 share — the position would
-                # be too small to be meaningful or would bypass risk management
-                # entirely if forced to 1 share.  Skip rather than override.
+            # ── Heat-based position sizing ────────────────────────────────────
+            # Calculate current portfolio heat once per signal (positions list
+            # is snapshotted before the loop; heat is re-derived each iteration
+            # to account for entries_this_cycle adjustments).
+            account_info = bot.get_account()
+            equity       = float(account_info.get("equity") or 0)
+            current_heat = bot.calculate_portfolio_heat(positions=current_positions)
+
+            per_trade_risk = _compute_per_trade_risk(config, current_heat, equity)
+            if per_trade_risk is None:
                 logger.info(
-                    f"Entry skipped for {sym} — risk-sized quantity < 1 share "
-                    f"(entry=${entry_price:.2f}, stop=${stop_price:.2f})"
+                    f"Entry skipped for {sym} — portfolio heat budget exhausted "
+                    f"({current_heat:.2f}% / {config.BOT_MAX_PORTFOLIO_HEAT_PCT:.2f}%)"
                 )
                 _log_action(
                     "ENTRY_SKIPPED", sym,
                     {
-                        "reason":       "position too small for risk parameters",
-                        "entry_price":  entry_price,
-                        "stop_price":   stop_price,
+                        "reason":       "heat budget exhausted",
+                        "current_heat": current_heat,
+                        "max_heat":     config.BOT_MAX_PORTFOLIO_HEAT_PCT,
                         "timeframe":    timeframe,
+                    },
+                    f"Skipped — heat {current_heat:.2f}% ≥ max {config.BOT_MAX_PORTFOLIO_HEAT_PCT:.2f}%",
+                )
+                continue
+
+            quantity = bot.calculate_position_size(entry_price, stop_price, available_risk_pct=per_trade_risk)
+
+            # Minimum risk floor — skip if the position is economically meaningless.
+            # This fires when the position cap constraint dominates and squeezes
+            # the actual risk far below the intended per-trade allocation.
+            if equity > 0:
+                risk_per_share   = abs(entry_price - stop_price)
+                implied_risk_pct = (risk_per_share * quantity / equity * 100) if quantity > 0 else 0.0
+                if implied_risk_pct < config.BOT_MIN_RISK_PCT:
+                    logger.info(
+                        f"Entry skipped for {sym} — implied risk {implied_risk_pct:.3f}% "
+                        f"below floor {config.BOT_MIN_RISK_PCT:.2f}%"
+                    )
+                    _log_action(
+                        "ENTRY_SKIPPED", sym,
+                        {
+                            "reason":           "below minimum risk floor",
+                            "implied_risk_pct": round(implied_risk_pct, 4),
+                            "min_risk_pct":     config.BOT_MIN_RISK_PCT,
+                            "entry_price":      entry_price,
+                            "stop_price":       stop_price,
+                            "timeframe":        timeframe,
+                        },
+                        f"Skipped — implied risk {implied_risk_pct:.3f}% < floor {config.BOT_MIN_RISK_PCT:.2f}%",
+                    )
+                    continue
+
+            if quantity < 1:
+                # Risk math produced < 1 share even after heat-based sizing.
+                # Skip rather than override — the position is too small.
+                logger.info(
+                    f"Entry skipped for {sym} — risk-sized quantity < 1 share "
+                    f"(entry=${entry_price:.2f}, stop=${stop_price:.2f}, risk={per_trade_risk:.3f}%)"
+                )
+                _log_action(
+                    "ENTRY_SKIPPED", sym,
+                    {
+                        "reason":          "position too small for risk parameters",
+                        "entry_price":     entry_price,
+                        "stop_price":      stop_price,
+                        "per_trade_risk":  per_trade_risk,
+                        "timeframe":       timeframe,
                     },
                     "Skipped — risk-sized quantity < 1 share",
                 )
                 continue
 
-            # Pending-entries guard — prevents exceeding max_positions within
-            # one scan cycle before any orders have filled.
+            # Pending-entries guard — hard safety rail (MAX_POSITIONS).
+            # Under normal conditions the heat budget is the binding constraint;
+            # this guard prevents degenerate cases (e.g., many micro-positions).
             if len(current_positions) + entries_this_cycle >= bot.max_positions:
                 logger.info(
-                    f"Entry skipped for {sym} — max positions reached "
+                    f"Entry skipped for {sym} — max positions safety rail reached "
                     f"({len(current_positions)} open + {entries_this_cycle} pending this cycle)"
                 )
                 _log_action(
                     "ENTRY_SKIPPED", sym,
                     {
-                        "reason":          "max positions reached",
+                        "reason":          "max positions safety rail",
                         "open_positions":  len(current_positions),
                         "pending_entries": entries_this_cycle,
                         "max_positions":   bot.max_positions,
                     },
-                    f"Skipped — max positions ({bot.max_positions}) reached",
+                    f"Skipped — max positions safety rail ({bot.max_positions})",
                 )
                 continue
 
             # can_trade() gate — checks existing position, pending orders
-            side = "buy" if signal == "BUY" else "sell"
             can, reason_ct = bot.can_trade(sym, side)
             if not can:
                 logger.info(f"can_trade({sym}) failed: {reason_ct}")
@@ -759,20 +839,22 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
                 order = bot.trading_client.submit_order(req)
 
                 trade_info = {
-                    "timestamp":    datetime.now(_ET).isoformat(),
-                    "symbol":       sym,
-                    "side":         side,
-                    "entry_type":   "limit",
-                    "timeframe":    timeframe,
-                    "quantity":     quantity,
-                    "entry_price":  entry_price,
-                    "stop_price":   stop_price,
-                    "target_price": target_price,
-                    "order_id":     str(order.id),
-                    "status":       order.status.value,
-                    "source":       "auto",
-                    "score":        r.get("score"),
-                    "grade":        r.get("grade"),
+                    "timestamp":            datetime.now(_ET).isoformat(),
+                    "symbol":               sym,
+                    "side":                 side,
+                    "entry_type":           "limit",
+                    "timeframe":            timeframe,
+                    "quantity":             quantity,
+                    "entry_price":          entry_price,
+                    "stop_price":           stop_price,
+                    "target_price":         target_price,
+                    "order_id":             str(order.id),
+                    "status":               order.status.value,
+                    "source":               "auto",
+                    "score":                r.get("score"),
+                    "grade":                r.get("grade"),
+                    "per_trade_risk_pct":   round(per_trade_risk, 4),
+                    "portfolio_heat_at_entry": round(current_heat, 4),
                 }
                 _log_trade(trade_info)
                 _record_action_time(sym, state)
@@ -781,15 +863,17 @@ def run_entry_scan(bot, config, state: dict, timeframe: str) -> None:
                 _log_action(
                     "AUTO_ENTRY", sym,
                     {
-                        "timeframe":    timeframe,
-                        "side":         side,
-                        "entry_price":  entry_price,
-                        "stop_price":   stop_price,
-                        "target_price": target_price,
-                        "quantity":     quantity,
-                        "score":        r.get("score"),
-                        "grade":        r.get("grade"),
-                        "order_id":     str(order.id),
+                        "timeframe":               timeframe,
+                        "side":                    side,
+                        "entry_price":             entry_price,
+                        "stop_price":              stop_price,
+                        "target_price":            target_price,
+                        "quantity":                quantity,
+                        "score":                   r.get("score"),
+                        "grade":                   r.get("grade"),
+                        "per_trade_risk_pct":      round(per_trade_risk, 4),
+                        "portfolio_heat_at_entry": round(current_heat, 4),
+                        "order_id":                str(order.id),
                     },
                     f"Bracket order submitted: {order.status.value}",
                 )

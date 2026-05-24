@@ -222,9 +222,11 @@ All gates must pass before a bracket order is submitted:
 5. **Per-symbol cooldown** — `BOT_ENTRY_COOLDOWN_HOURS` (default: 4h) since last bot action on this symbol
 6. **Grade filter** — signal grade must meet or exceed `BOT_MIN_GRADE` (default: B)
 7. **Tier 4 R:R check** — R:R ≥ 2:1 and price validity (run by `SignalHierarchy.passes_risk_checks()`)
-8. **Position size** — risk-sized quantity must be ≥ 1 share
-9. **Max positions guard** — `len(open_positions) + entries_this_cycle < max_positions`
-10. **can_trade()** — no existing position, no pending orders for this symbol
+8. **Portfolio heat budget** — `current_heat < BOT_MAX_PORTFOLIO_HEAT_PCT`; per-trade risk derived from remaining budget
+9. **Minimum risk floor** — implied position risk must be ≥ `BOT_MIN_RISK_PCT` (default: 0.25%); prevents economically meaningless positions
+10. **Position size** — risk-sized quantity must be ≥ 1 share
+11. **Max positions safety rail** — `len(open_positions) + entries_this_cycle < MAX_POSITIONS` (hard ceiling, not primary constraint)
+12. **can_trade()** — no existing position, no pending orders for this symbol
 
 ---
 
@@ -251,5 +253,8 @@ Symbols in the blacklist are skipped by both entry scan and position review. Tog
 | `BOT_MAX_DAILY_LOSS_PCT` | `2.0` | Daily loss % that triggers circuit breaker |
 | `BOT_ENTRY_COOLDOWN_HOURS` | `4` | Hours between entries on the same symbol |
 | `BOT_REVIEW_TIMEFRAMES` | `long,swing,short` | Which timeframes to review positions on |
-| `max_positions` | `5` | Maximum concurrent open positions |
-| `risk_percentage` | `1.0` | % of account equity risked per trade |
+| `max_positions` | `12` | Hard safety rail on position count (not primary constraint) |
+| `risk_percentage` | `1.0` | Fallback per-trade risk % (used by manual trades; bot uses heat system) |
+| `BOT_MAX_PORTFOLIO_HEAT_PCT` | `5.0` | Total open risk budget as % of equity (primary position constraint) |
+| `BOT_MAX_RISK_PER_TRADE_PCT` | `1.0` | Per-trade risk cap as % of equity |
+| `BOT_MIN_RISK_PCT` | `0.25` | Minimum implied risk % to accept an entry |

@@ -72,6 +72,18 @@ def create_router(bot, login_required) -> APIRouter:
                 val = str(data["bot_review_timeframes"]).strip()
                 set_setting("bot_review_timeframes", val)
                 bot.config.BOT_REVIEW_TIMEFRAMES = [t.strip() for t in val.split(",") if t.strip()]
+            if "bot_max_portfolio_heat_pct" in data:
+                val = float(data["bot_max_portfolio_heat_pct"])
+                set_setting("bot_max_portfolio_heat_pct", str(val))
+                bot.config.BOT_MAX_PORTFOLIO_HEAT_PCT = val
+            if "bot_max_risk_per_trade_pct" in data:
+                val = float(data["bot_max_risk_per_trade_pct"])
+                set_setting("bot_max_risk_per_trade_pct", str(val))
+                bot.config.BOT_MAX_RISK_PER_TRADE_PCT = val
+            if "bot_min_risk_pct" in data:
+                val = float(data["bot_min_risk_pct"])
+                set_setting("bot_min_risk_pct", str(val))
+                bot.config.BOT_MIN_RISK_PCT = val
 
             # Password — only update if a real value was sent (not the placeholder)
             if "dashboard_password" in data:

@@ -188,6 +188,34 @@ The two halt types are distinguished by `halt_source` in `bot_state.json`:
 - `"manual"` — user-initiated; never auto-resets
 - `"circuit_breaker"` — daily loss limit; auto-resets at market open
 
+### Portfolio Heat System
+
+Position sizing is governed by a **portfolio heat budget** rather than a fixed position count.
+
+**Heat** = sum of `|entry_price - stop_price| × qty / equity` for all open positions with known stops. This is the total capital at risk as a percentage of equity.
+
+```
+BOT_MAX_PORTFOLIO_HEAT_PCT = 5.0%   # total risk budget
+BOT_MAX_RISK_PER_TRADE_PCT = 1.0%   # per-trade cap
+BOT_MIN_RISK_PCT           = 0.25%  # minimum floor
+MAX_POSITIONS              = 12     # hard safety rail
+```
+
+**How sizing works at entry:**
+1. Calculate current heat across all open positions
+2. `available_heat = max_heat - current_heat`
+3. `per_trade_risk = min(available_heat, max_risk_per_trade)`
+4. If `per_trade_risk ≤ 0` → heat budget exhausted, skip entry
+5. Size the position: `qty = (equity × per_trade_risk%) / |entry - stop|`
+6. If implied risk < `BOT_MIN_RISK_PCT` → position is economically meaningless, skip
+7. If `qty < 1` → skip
+
+**Why heat over position count:**
+- Position count is an output, not an input. The heat budget naturally determines how many positions the portfolio can hold.
+- As positions close (stops hit, targets hit), heat is freed and new entries become possible automatically.
+- On cluster days with many signals, the system takes as many as the heat budget allows — not an arbitrary cap.
+- Every signal that passes the grade filter gets equal capital allocation. Grade gates entry; it does not gate sizing. Tiered sizing will be considered once paper trading data demonstrates statistically significant expectancy differences between grades.
+
 All bot actions are logged to `data/bot_actions.json` and visible in the Bot page.
 
 ---

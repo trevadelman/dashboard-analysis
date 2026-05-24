@@ -217,35 +217,93 @@ class TradingBot:
 
     # ===== RISK MANAGEMENT =====
 
-    def calculate_position_size(self, entry_price, stop_price):
+    def calculate_portfolio_heat(self, positions: list[dict] | None = None) -> float:
+        """
+        Calculate current portfolio heat as a percentage of equity.
+
+        Heat = sum of |entry_price - stop_price| × qty / equity for all open
+        positions that have a known stop price.  Positions without a stop
+        (e.g., manually entered without a bracket) are excluded from the heat
+        calculation — they are still counted against MAX_POSITIONS.
+
+        Args:
+            positions: Pre-fetched position list (avoids a redundant API call).
+                       If None, fetches from Alpaca.
+
+        Returns:
+            float: Current portfolio heat as a percentage of equity (0–100).
+        """
+        account = self.get_account()
+        equity  = account.get('equity', 0)
+        if equity <= 0:
+            return 0.0
+
+        if positions is None:
+            positions = self.get_positions()
+
+        # Build a map of symbol → stop price from open bracket orders
+        stop_map: dict[str, float] = {}
+        try:
+            all_orders = self.get_orders(status='open')
+            for order in all_orders:
+                sym = order.get('symbol', '').upper()
+                # Check top-level stop order
+                if order.get('type') in ('stop', 'stop_limit') and order.get('stop_price'):
+                    stop_map[sym] = float(order['stop_price'])
+                # Check bracket legs
+                for leg in (order.get('legs') or []):
+                    if leg.get('type') in ('stop', 'stop_limit') and leg.get('stop_price'):
+                        stop_map[sym] = float(leg['stop_price'])
+        except Exception as e:
+            logger.warning(f"Could not fetch orders for heat calculation: {e}")
+
+        total_heat = 0.0
+        for pos in positions:
+            sym        = pos.get('symbol', '').upper()
+            qty        = abs(float(pos.get('qty', 0)))
+            entry      = float(pos.get('avg_entry_price', 0))
+            stop_price = stop_map.get(sym)
+            if stop_price and entry > 0 and qty > 0:
+                risk_per_share = abs(entry - stop_price)
+                position_risk  = risk_per_share * qty
+                total_heat    += (position_risk / equity) * 100
+
+        return round(total_heat, 4)
+
+    def calculate_position_size(self, entry_price, stop_price, available_risk_pct: float | None = None):
         """
         Calculate position size based on risk parameters.
 
-        Two constraints applied — the lesser of the two wins:
-          1. Risk-based: risk_pct% of equity divided by risk-per-share
-          2. Position cap: max_position_pct% of equity divided by entry price
+        Primary constraint: risk-based sizing using available_risk_pct of equity.
+        Secondary constraint: position value cap (max_position_pct% of equity).
+        The lesser of the two wins.
 
-        This prevents tight stops from inflating share counts into
-        positions that are a multiple of account equity.
+        available_risk_pct is the per-trade risk budget derived from the heat
+        system.  If not provided, falls back to config.RISK_PERCENTAGE.
 
         Args:
             entry_price (float): Entry price
             stop_price (float): Stop loss price
+            available_risk_pct (float, optional): Per-trade risk as % of equity.
+                Provided by run_entry_scan() based on remaining heat budget.
 
         Returns:
-            int: Position size in shares (minimum 1)
+            int: Position size in shares (0 if risk math produces < 1 share —
+                 caller should skip the entry rather than override sizing).
         """
         account = self.get_account()
         equity  = account.get('equity', 0)
         if equity <= 0 or entry_price <= 0:
-            return 1
+            return 0
+
+        risk_pct = available_risk_pct if available_risk_pct is not None else self.risk_percentage
 
         # Constraint 1 — risk-based sizing
         risk_per_share = abs(entry_price - stop_price)
         if risk_per_share == 0:
-            risk_based = int((equity * 0.05) / entry_price)
+            risk_based = int((equity * (risk_pct / 100)) / entry_price)
         else:
-            risk_amount = equity * (self.risk_percentage / 100)
+            risk_amount = equity * (risk_pct / 100)
             risk_based  = int(risk_amount / risk_per_share)
 
         # Constraint 2 — position value cap
