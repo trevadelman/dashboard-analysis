@@ -252,6 +252,10 @@ def check_circuit_breakers(bot, config, state: dict) -> tuple[bool, str]:
     Checks:
       1. Manually halted via dashboard
       2. Max daily loss exceeded
+
+    halt_source distinguishes why the bot was halted:
+      "manual"          — user-initiated via dashboard; persists across market open
+      "circuit_breaker" — daily loss limit; auto-resets at next market open snapshot
     """
     if state.get("halted"):
         return False, "Bot is manually halted"
@@ -270,7 +274,8 @@ def check_circuit_breakers(bot, config, state: dict) -> tuple[bool, str]:
                 loss_pct = (daily_open - float(equity)) / daily_open * 100
                 if loss_pct >= max_loss_pct:
                     reason = f"Max daily loss breached: down {loss_pct:.2f}% (limit {max_loss_pct}%)"
-                    state["halted"] = True
+                    state["halted"]      = True
+                    state["halt_source"] = "circuit_breaker"
                     _save_state(state)
                     _log_action("CIRCUIT_BREAKER", None, {"loss_pct": loss_pct, "limit": max_loss_pct}, reason)
                     return False, reason
@@ -826,8 +831,13 @@ def cancel_stale_orders(bot, config, state: dict) -> None:
         cancelled = []
 
         for order in all_orders:
-            # Only cancel limit entry orders (not stop/target bracket legs)
-            if order.get("type") != "limit" or order.get("side") != "buy":
+            # Cancel stale limit entry orders — both buy (long) and sell (short).
+            # Guard against cancelling bracket stop/target legs by checking order_class:
+            # a top-level bracket entry has order_class="bracket" or None (standalone).
+            # Child legs (stop, take-profit) are nested under the parent's legs list and
+            # are not returned as top-level orders by get_orders(), so order_class is the
+            # correct discriminator here — not side.
+            if order.get("type") != "limit":
                 continue
             if order.get("order_class") not in ("bracket", None):
                 continue
@@ -872,16 +882,29 @@ def cancel_stale_orders(bot, config, state: dict) -> None:
 def snapshot_daily_equity(bot, state: dict) -> None:
     """
     Record today's opening equity for the daily loss circuit breaker.
-    Also resets the daily halt flag.
 
     For equity watchlists: called at 9:30 ET (market open).
     For crypto watchlists: called at midnight ET (start of crypto trading day).
+
+    Halt reset policy:
+      - Circuit-breaker halts (halt_source="circuit_breaker") are auto-reset here
+        because they are triggered by a daily loss limit that resets each morning.
+      - Manual halts (halt_source="manual" or no halt_source) are NOT auto-reset.
+        The user explicitly paused the bot and must explicitly resume it via the
+        dashboard.  This prevents the bot from trading through a Fed decision,
+        CPI print, or any other event the user chose to sit out.
     """
     try:
         account = bot.get_account()
         equity  = account.get("equity", 0)
         state["daily_open_equity"] = equity
-        state["halted"] = False          # reset halt at start of new trading day
+
+        # Only auto-reset circuit-breaker halts; preserve manual halts.
+        if state.get("halt_source") == "circuit_breaker":
+            state["halted"]      = False
+            state["halt_source"] = None
+            logger.info("Circuit-breaker halt auto-reset at market open")
+
         _save_state(state)
         _log_action("DAILY_OPEN", None, {"equity": equity}, f"Daily open equity: ${equity:,.2f}")
     except Exception as e:

@@ -44,13 +44,18 @@ def create_router(bot, login_required) -> APIRouter:
 
         Body: { "halted": true | false }
         Sets bot_state.halted which is checked by all circuit breaker gates.
+
+        When halting manually, halt_source is set to "manual" so that the
+        daily equity snapshot at market open does NOT auto-reset this halt.
+        Manual halts require an explicit resume via this endpoint.
         """
         try:
             from strategies.auto_manager import _load_state, _save_state, _log_action
             data   = await request.json()
             halted = bool(data.get("halted", True))
             state  = _load_state()
-            state["halted"] = halted
+            state["halted"]      = halted
+            state["halt_source"] = "manual" if halted else None
             _save_state(state)
             action = "MANUAL_HALT" if halted else "MANUAL_RESUME"
             _log_action(action, None, {}, "Bot halted by user" if halted else "Bot resumed by user")

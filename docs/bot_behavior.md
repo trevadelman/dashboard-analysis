@@ -14,7 +14,7 @@ The scheduler (`scheduler.py`) runs all jobs in a background thread pool and nev
 
 | Job ID | Name | Trigger | Purpose |
 |--------|------|---------|---------|
-| `market_open_snapshot` | Market open equity snapshot | 9:30 ET Mon–Fri (cron) | Record opening equity; reset daily halt |
+| `market_open_snapshot` | Market open equity snapshot | 9:30 ET Mon–Fri (cron) | Record opening equity; auto-reset circuit-breaker halts only |
 | `long_review` | Long position review | 9:35 ET Mon–Fri (cron) | Review daily-timeframe positions |
 | `long_scan` | Long timeframe entry scan | 9:40 ET Mon–Fri (cron) | Scan for daily-timeframe signals |
 | `exit_poller` | Exit detection poller | Every 5 min (interval, fires immediately on startup) | Detect positions closed by stop/target/manual |
@@ -55,7 +55,9 @@ Two hard stops gate all bot activity. Both are checked at the start of every pos
 
 Set via the dashboard Bot page (Pause/Resume button) or directly via `POST /api/bot/pause`.
 
-Stored as `halted: true` in `data/bot_state.json`. Persists across restarts. Reset manually via the dashboard or automatically at the start of each new trading day (9:30 ET equity / midnight ET crypto).
+Stored as `halted: true` and `halt_source: "manual"` in `data/bot_state.json`. Persists across restarts **and across market opens** — a manual halt requires an explicit resume via the dashboard. It will not auto-reset at 9:30 ET.
+
+Use this when you want to sit out a specific event (Fed decision, CPI print, earnings season) without the bot resuming on its own.
 
 ### 2. Daily loss limit
 
@@ -63,10 +65,20 @@ Configured via `BOT_MAX_DAILY_LOSS_PCT` (default: 2%). Checked against `daily_op
 
 ```
 loss_pct = (daily_open_equity - current_equity) / daily_open_equity × 100
-if loss_pct >= BOT_MAX_DAILY_LOSS_PCT → halt bot, log CIRCUIT_BREAKER action
+if loss_pct >= BOT_MAX_DAILY_LOSS_PCT → halt bot (halt_source="circuit_breaker"), log CIRCUIT_BREAKER action
 ```
 
-The halt is auto-reset at the next market open snapshot.
+Circuit-breaker halts (`halt_source: "circuit_breaker"`) are auto-reset at the next market open snapshot (9:30 ET equity / midnight ET crypto). Manual halts are never auto-reset.
+
+### Halt source field
+
+`bot_state.json` stores a `halt_source` field alongside `halted` to distinguish the origin:
+
+| `halt_source` | Set by | Auto-resets at market open? |
+|---------------|--------|-----------------------------|
+| `"manual"` | Dashboard Pause button / `POST /api/bot/pause` | **No** — requires explicit Resume |
+| `"circuit_breaker"` | Daily loss limit breach | **Yes** — resets automatically |
+| `null` / absent | Legacy state (pre-fix) | **No** — treated as manual for safety |
 
 ---
 

@@ -176,13 +176,17 @@ All indicators are computed in `analysis/indicators.py` (`TechnicalIndicators.ca
 The autonomous bot (`strategies/auto_manager.py`) runs on a scheduler (`scheduler.py`):
 
 - **Position review:** Every hour during market hours (equity) or 24/7 (crypto)
-- **Entry scan:** Every 30 minutes during market hours
-- **Stale order cancellation:** 3:45 PM ET (15 min before close)
+- **Entry scan:** Every 15 min (short), 60 min (swing), 9:40 ET (long) during market hours
+- **Stale order cancellation:** 3:45 PM ET (15 min before close) — cancels both buy and sell limit entry orders older than 4 hours; bracket stop/target legs are not affected
 - **Daily equity snapshot:** 9:30 AM ET (market open)
 
 Circuit breakers:
-- Manual halt via dashboard
-- Max daily loss % (configurable, default 2%)
+- **Manual halt** — set via dashboard; persists across market opens and requires explicit resume. Will not auto-reset at 9:30 ET.
+- **Max daily loss %** (configurable, default 2%) — auto-resets at next market open
+
+The two halt types are distinguished by `halt_source` in `bot_state.json`:
+- `"manual"` — user-initiated; never auto-resets
+- `"circuit_breaker"` — daily loss limit; auto-resets at market open
 
 All bot actions are logged to `data/bot_actions.json` and visible in the Bot page.
 
