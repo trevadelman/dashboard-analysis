@@ -174,14 +174,17 @@ async function checkCache() {
     } catch (_) {}
 }
 
-async function loadFromCache() {
+async function loadFromCache(silent = false) {
     const timeframe = getSelectedTimeframe();
     try {
         const res = await fetch(`/api/scan/cache?timeframe=${encodeURIComponent(timeframe)}`);
-        if (!res.ok) { showScanStatus('error', 'No cache found for this timeframe — run a scan first.'); return; }
+        if (!res.ok) {
+            if (!silent) showScanStatus('error', 'No cache found for this timeframe — run a scan first.');
+            return;
+        }
         const data = await res.json();
         if (!data.results || data.results.length === 0) {
-            showScanStatus('error', `No cached results for timeframe "${timeframe}" — run a scan first.`);
+            if (!silent) showScanStatus('error', `No cached results for timeframe "${timeframe}" — run a scan first.`);
             return;
         }
 
@@ -198,7 +201,7 @@ async function loadFromCache() {
         document.getElementById('scan-progress-bar').style.width = '100%';
         document.getElementById('scan-export-btn').classList.remove('hidden');
     } catch (e) {
-        showScanStatus('error', `Failed to load cache: ${e.message}`);
+        if (!silent) showScanStatus('error', `Failed to load cache: ${e.message}`);
     }
 }
 
@@ -453,8 +456,11 @@ function onListChange() {
         } else {
             document.getElementById('scan-custom-input').value = '';
         }
+        // Custom / saved lists are ad-hoc — no cache to load
     } else {
         wrap.classList.add('hidden');
+        // Auto-load cache for the newly selected universe + current timeframe
+        loadFromCache(true);
     }
 }
 
@@ -579,4 +585,13 @@ document.addEventListener('DOMContentLoaded', () => {
     renderSavedLists();
     checkCache();
     checkUniverseInfo();
+
+    // Auto-load cache for the default timeframe on page load.
+    // silent=true so no error toast if no cache exists yet.
+    loadFromCache(true);
+
+    // Auto-load cache when the user switches timeframes.
+    document.querySelectorAll('input[name="scan-timeframe"]').forEach(radio => {
+        radio.addEventListener('change', () => loadFromCache(true));
+    });
 });
