@@ -165,18 +165,15 @@ def fetch_alpaca_universe(trading_client, min_price: float = 1.0) -> List[str]:
     """
     cache_path = os.path.normpath(_UNIVERSE_CACHE_PATH)
 
-    # Return cached result if fresh
+    # Delete stale or corrupt cache before fetching fresh data.
+    # The caller (refresh_universe endpoint) already removes the file, but
+    # fetch_alpaca_universe may also be called directly — guard here too.
     if os.path.exists(cache_path):
         try:
-            with open(cache_path, 'r') as f:
-                cached = json.load(f)
-            age = time.time() - cached.get('fetched_at', 0)
-            if age < _UNIVERSE_CACHE_TTL:
-                logger.info(f"Using cached asset universe ({len(cached['symbols'])} symbols, "
-                            f"{age/3600:.1f}h old)")
-                return cached['symbols']
+            os.remove(cache_path)
+            logger.info("Cleared existing asset universe cache — fetching fresh from Alpaca")
         except Exception as e:
-            logger.warning(f"Could not read asset universe cache: {e}")
+            logger.warning(f"Could not remove asset universe cache: {e}")
 
     logger.info("Fetching asset universe from Alpaca Assets API…")
     try:
