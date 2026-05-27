@@ -970,6 +970,10 @@ def snapshot_daily_equity(bot, state: dict) -> None:
     For equity watchlists: called at 9:30 ET (market open).
     For crypto watchlists: called at midnight ET (start of crypto trading day).
 
+    Also refreshes the asset universe cache once per day so the scanner always
+    works from a clean, up-to-date ticker list.  Any faulty or delisted symbols
+    that crept into the previous cache are purged on every daily open.
+
     Halt reset policy:
       - Circuit-breaker halts (halt_source="circuit_breaker") are auto-reset here
         because they are triggered by a daily loss limit that resets each morning.
@@ -993,3 +997,14 @@ def snapshot_daily_equity(bot, state: dict) -> None:
         _log_action("DAILY_OPEN", None, {"equity": equity}, f"Daily open equity: ${equity:,.2f}")
     except Exception as e:
         logger.error(f"Failed to snapshot daily equity: {e}")
+
+    # Refresh the asset universe cache once per day.
+    # Runs after the equity snapshot so a failure here never blocks the snapshot.
+    # Only refreshes if the trading client is available (no-op if bot has no API connection).
+    try:
+        if bot.trading_client is not None:
+            from screeners.symbol_lists import fetch_alpaca_universe
+            fetch_alpaca_universe(bot.trading_client, min_price=1.0)
+            logger.info("[scheduler] Daily asset universe refresh complete")
+    except Exception as e:
+        logger.warning(f"[scheduler] Daily asset universe refresh failed: {e}")
