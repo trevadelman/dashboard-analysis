@@ -89,7 +89,7 @@ class Config:
         # Grades: A (80-100), B (60-79), C (40-59), D (0-39).
         # Default "B" — only take setups with strong RS + RVOL confirmation.
         self.BOT_MIN_GRADE = (
-            get_setting("bot_min_grade") or os.getenv("BOT_MIN_GRADE", "B")
+            get_setting("bot_min_grade") or os.getenv("BOT_MIN_GRADE", "C")
         ).upper()
 
         # ── Strategy parameters (hardcoded defaults — tuned per timeframe) ────
