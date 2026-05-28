@@ -526,7 +526,7 @@ class SignalHierarchy:
             details.append("❌ Risk is zero — invalid signal")
             return False, details
 
-        rr = reward / risk
+        rr = round(reward / risk, 2)
         details.append(f"R:R = {rr:.2f} (min={self.params['min_rr_ratio']}) → {'✅' if rr >= self.params['min_rr_ratio'] else '❌'}")
         details.append(f"Entry: ${entry:.2f} | Stop: ${stop:.2f} | Target: ${target:.2f}")
 
